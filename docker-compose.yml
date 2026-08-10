@@ -1,0 +1,9 @@
+services:
+  runner:
+    build:
+      context: .
+    volumes:
+      - ./data:/app/data
+    devices:
+      - /dev/kvm
+    
