@@ -44,13 +44,13 @@ type DataSource struct {
 }
 
 type StoredProcedure struct {
-	Metadata ProcedureMetadata `json:"metadata"`
-	Control  Control           `json:"control"`
-	Features Features          `json:"features"`
-	Links    Links             `json:"links"`
+	Metadata LayerMetadata `json:"metadata"`
+	Control  Control       `json:"control"`
+	Features Features      `json:"features"`
+	Links    Links         `json:"links"`
 }
 
-type ProcedureMetadata struct {
+type LayerMetadata struct {
 	Labels      map[string]string `json:"labels"`
 	Tags        map[string]string `json:"tags"`
 	ID          string            `json:"id"`
@@ -91,14 +91,14 @@ type Links struct {
 }
 
 type EventTrigger struct {
-	Metadata ProcedureMetadata `json:"metadata"`
-	Control  Control           `json:"control"`
-	Features Features          `json:"features"`
-	Links    Links             `json:"links"`
+	Metadata LayerMetadata `json:"metadata"`
+	Control  Control       `json:"control"`
+	Features Features      `json:"features"`
+	Links    Links         `json:"links"`
 }
 
 type Event struct {
-	Metadata ProcedureMetadata `json:"metadata"`
-	Control  Control           `json:"control"`
-	Features Features          `json:"features"`
+	Metadata LayerMetadata `json:"metadata"`
+	Control  Control       `json:"control"`
+	Features Features      `json:"features"`
 }

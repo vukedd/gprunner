@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"fmt"
+
 	"github.com/c12s/runner/internal/model"
 	"github.com/c12s/runner/internal/validation"
 )
@@ -15,21 +17,8 @@ func New(v *validation.BuildValidator) *Orchestrator {
 
 func (o *Orchestrator) InstantiateChart(chart model.Chart) error {
 	layers := chart.ChartData
-
-	for _, sp := range layers.StoredProcedures {
-		for _, hl := range sp.Links.HardLinks {
-			ds := layers.DataSources[hl]
-			if err := o.v.ValidateLink(ds); err != nil {
-				return err
-			}
-		}
-
-		for _, sl := range sp.Links.SoftLinks {
-			ds := layers.DataSources[sl]
-			if err := o.v.ValidateLink(ds); err != nil {
-				return err
-			}
-		}
+	if err := o.v.ValidateLayers(layers); err != nil {
+		return fmt.Errorf("an error has occurred while validating data sources: %w", err)
 	}
 
 	return nil

@@ -24,7 +24,7 @@
                 "id": "a0715e59-49c3-4323-bf34-fbb4ccb7e123",
                 "name": "Data Source 3",
                 "type": "file",
-                "path": "/app/data/data_3.csv",
+                "path": "/app/data/data_5.csv",
                 "resourceName": "Data 3",
                 "description": "This data source contains some data."
             }
@@ -89,8 +89,12 @@
                     },
                     "id": "1f9f4dff-8f6a-44a2-98a6-256ab48b6123",
                     "name": "Event Trigger 3",
-                    "image": "abc://abc3",
-                    "build": null,
+                    "image": "",
+                    "build": {
+                        "workdir": "",
+                        "pull": "",
+                        "command": ""
+                    },
                     "prefix": "DEBUG",
                     "topic": "",
                     "description": "Event Trigger 3"
