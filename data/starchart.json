@@ -24,7 +24,7 @@
                 "id": "a0715e59-49c3-4323-bf34-fbb4ccb7e123",
                 "name": "Data Source 3",
                 "type": "file",
-                "path": "/app/data/data_5.csv",
+                "path": "/app/data/data_3.csv",
                 "resourceName": "Data 3",
                 "description": "This data source contains some data."
             }
@@ -91,9 +91,9 @@
                     "name": "Event Trigger 3",
                     "image": "",
                     "build": {
-                        "workdir": "",
-                        "pull": "",
-                        "command": ""
+                        "workdir": "examples/helloworld-rust1.75",
+                        "pull": "https://github.com/unikraft/catalog",
+                        "command": "kraft build --plat qemu --arch x86_64"
                     },
                     "prefix": "DEBUG",
                     "topic": "",
@@ -104,7 +104,7 @@
                     "runDetached": true,
                     "removeOnStop": true,
                     "memory": "16K",
-                    "kernelArgs": "run process"
+                    "kernelArgs": "/helloworld"
                 },
                 "features": {
                     "networks": [
@@ -136,7 +136,7 @@
                     "tags": {},
                     "id": "1eb31243-5f06-4e4b-ab69-0ff69e0f6123",
                     "name": "Event 3",
-                    "image": "unikernel://image_e3",
+                    "image": "unikraft.org/helloworld:latest",
                     "build": null,
                     "prefix": "DEBUG",
                     "topic": "Insert",

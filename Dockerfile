@@ -16,6 +16,8 @@ RUN go build -o build.bin ./cmd
 
 FROM kraftkit.sh/base:latest AS run
 
+WORKDIR /app
+
 COPY --from=build /app/build.bin /usr/bin/runner
 
 ENTRYPOINT ["/usr/bin/runner"]

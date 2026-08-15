@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/c12s/runner/internal/model"
-	"github.com/c12s/runner/internal/orchestrator"
+	"github.com/c12s/runner/internal/orchestration"
 	"github.com/c12s/runner/internal/validation"
 )
 
@@ -22,8 +22,8 @@ func main() {
 		panic(err)
 	}
 
-	v := validation.New()
-	o := orchestrator.New(v)
+	v := validation.NewBuildValidator()
+	o := orchestration.NewOrchestrator(v)
 
 	if err = o.InstantiateChart(chart); err != nil {
 		fmt.Print(err)

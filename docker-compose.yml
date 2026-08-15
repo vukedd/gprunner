@@ -1,9 +1,46 @@
 services:
+  buildkitd:
+    image: moby/buildkit:v0.29.0
+    privileged: true
+    volumes:
+      # socket dir
+      - buildkit-sock:/run/buildkit
+      # layer cache
+      - buildkit-cache:/var/lib/buildkit
+    healthcheck:
+      test: ["CMD", "buildctl", "debug", "workers"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
   runner:
     build:
       context: .
+    depends_on:
+      buildkitd:
+        condition: service_healthy
+    environment:
+      IMAGE_DIR: /app/data/images
+      BUILD_DIR: /app/data/build
+      # socket dir
+      KRAFTKIT_BUILDKIT_HOST: unix:///run/buildkit/buildkitd.sock
+      # avoid interactive questions flag
+      KRAFTKIT_NO_PROMPT: "true"
+      # log styling opptions
+      KRAFTKIT_LOG_TYPE: basic
+      KRAFTKIT_NO_COLOR: "true"
     volumes:
+      # image/build mount
       - ./data:/app/data
+      # socket access with read only options
+      - buildkit-sock:/run/buildkit:ro
+      # kraft package store
+      - kraft-store:/root/.local/share/kraftkit
     devices:
       - /dev/kvm
-    
+
+volumes:
+  buildkit-sock:
+  buildkit-cache:
+  kraft-store:
