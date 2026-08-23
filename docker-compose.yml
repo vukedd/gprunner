@@ -23,6 +23,9 @@ services:
     environment:
       IMAGE_DIR: /app/data/images
       BUILD_DIR: /app/data/build
+      DB_DIR: /app/data/db
+      VERSION_TAG: ${VERSION_TAG}
+
       # socket dir
       KRAFTKIT_BUILDKIT_HOST: unix:///run/buildkit/buildkitd.sock
       # avoid interactive questions flag
@@ -30,6 +33,7 @@ services:
       # log styling opptions
       KRAFTKIT_LOG_TYPE: basic
       KRAFTKIT_NO_COLOR: "true"
+      KRAFTKIT_NO_CHECK_UPDATES: "true"
     volumes:
       # image/build mount
       - ./data:/app/data

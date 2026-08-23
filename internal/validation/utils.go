@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -72,3 +73,101 @@ func untar(archive, dst string) error {
 		}
 	}
 }
+
+func extractPackage(packageArchivePath, outputDir string) error {
+	// outer container untar
+	// e.g. package structure:
+	// 	- index.json, oci-layout
+	//  - blobs/sha256/manifest.json
+	//  - multiple blobs/sha256/tars (kernels and initrd)
+	tmp, err := os.MkdirTemp("", "kraft-pkg-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+
+	if err := untar(packageArchivePath, tmp); err != nil {
+		return fmt.Errorf("unpacking exported package archive: %w", err)
+	}
+
+	// unmarshal index structure with neccessary manifest data
+	var index struct {
+		Manifests []struct {
+			Digest string `json:"digest"`
+		} `json:"manifests"`
+	}
+	if err := readJSON(filepath.Join(tmp, "index.json"), &index); err != nil {
+		return fmt.Errorf("reading package index: %w", err)
+	}
+
+	// each manifest lists layer blobs; a layer is a tar containing a single
+	// unikraft/bin/* file, so unpacking them all into outputDir merges into
+	// one tree (kernel, kernel.dbg, initrd)
+	for _, m := range index.Manifests {
+		var manifest struct {
+			Layers []struct {
+				Digest string `json:"digest"`
+			} `json:"layers"`
+		}
+		if err := readJSON(blobPath(tmp, m.Digest), &manifest); err != nil {
+			return fmt.Errorf("reading manifest %s: %w", m.Digest, err)
+		}
+
+		for _, l := range manifest.Layers {
+			if err := untar(blobPath(tmp, l.Digest), outputDir); err != nil {
+				return fmt.Errorf("unpacking layer %s: %w", l.Digest, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func packageLayer(layerID, workDir, outputDir string, buildFields []string) error {
+
+	// rebuild rootfs and fetch kernels from store (downloads on cache miss)
+	args := []string{"pkg", "--no-prompt", "--name", layerID}
+
+	if plat, arch := targetOf(buildFields); plat != "" && arch != "" {
+		args = append(args, "--plat", plat, "--arch", arch)
+	}
+	args = append(args, workDir)
+
+	output, err := exec.Command("kraft", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("packaging failed for layer %q: %v — %s", layerID, err, output)
+	}
+
+	// tar manifests package
+	archive := filepath.Join(workDir, "package.tar")
+
+	output, err = exec.Command("kraft", "pkg", "export", "--output", archive, layerID).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("package export failed for layer %q: %v — %s", layerID, err, output)
+	}
+
+	// extract package to outputDir
+	if err := extractPackage(archive, outputDir); err != nil {
+		return fmt.Errorf("unpacking package for layer %q: %w", layerID, err)
+	}
+
+	return nil
+}
+
+func targetOf(buildFields []string) (plat string, arch string) {
+	for i, f := range buildFields {
+		if i+1 >= len(buildFields) {
+			break
+		}
+
+		switch f {
+		case "--plat", "-p":
+			plat = buildFields[i+1]
+		case "--arch", "-m":
+			arch = buildFields[i+1]
+		}
+	}
+
+	return plat, arch
+}
+

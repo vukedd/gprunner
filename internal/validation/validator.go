@@ -1,6 +1,9 @@
 package validation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,8 +15,9 @@ import (
 )
 
 var (
-	imageDir = os.Getenv("IMAGE_DIR")
-	buildDir = os.Getenv("BUILD_DIR")
+	imageDir   = os.Getenv("IMAGE_DIR")
+	buildDir   = os.Getenv("BUILD_DIR")
+	versionTag = os.Getenv("VERSION_TAG")
 )
 
 type BuildValidator struct{}
@@ -28,20 +32,20 @@ func (v *BuildValidator) ValidateLayers(layers model.ChartConfig) error {
 	datasources := layers.DataSources
 
 	for _, pcd := range procedures {
-		if err := v.validateLayer(pcd.Metadata, pcd.Links, datasources); err != nil {
+		if err := v.validateLayer(pcd.Features, pcd.Metadata, pcd.Links, datasources); err != nil {
 			return err
 		}
 	}
 
 	for _, et := range triggers {
-		if err := v.validateLayer(et.Metadata, et.Links, datasources); err != nil {
+		if err := v.validateLayer(et.Features, et.Metadata, et.Links, datasources); err != nil {
 			return err
 		}
 	}
 
 	// event structure doesn't contain links so empty struct is passed
 	for _, e := range events {
-		if err := v.validateLayer(e.Metadata, model.Links{}, datasources); err != nil {
+		if err := v.validateLayer(e.Features, e.Metadata, model.Links{}, datasources); err != nil {
 			return err
 		}
 	}
@@ -49,12 +53,12 @@ func (v *BuildValidator) ValidateLayers(layers model.ChartConfig) error {
 	return nil
 }
 
-func (v *BuildValidator) validateLayer(md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) error {
+func (v *BuildValidator) validateLayer(fts model.Features, md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) error {
 	if err := v.validateLinks(links, md, datasources); err != nil {
 		return err
 	}
 
-	return v.validateLayerImage(md)
+	return v.validateLayerImage(md, fts)
 }
 
 // data source validation
@@ -99,14 +103,18 @@ func checkFileAccess(ds model.DataSource) error {
 }
 
 // image validation
-func (v *BuildValidator) validateLayerImage(md model.LayerMetadata) error {
-	if isLayerImageSaved(md.ID) {
-		fmt.Printf("image is already downloaded. Layer Name: %s\n", md.Name)
-		return nil
-	}
+func (v *BuildValidator) validateLayerImage(md model.LayerMetadata, fts model.Features) error {
+	// if isLayerImageSaved(md.ID) {
+	// 	fmt.Printf("image is already downloaded. Layer Name: %s\n", md.Name)
+	// 	return nil
+	// }
 
-	if err := downloadImage(md); err != nil {
-		return err
+	// if err := downloadImage(md); err != nil {
+	// 	return err
+	// }
+
+	if err := resolveImage(md, fts); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 
 	return nil
@@ -170,99 +178,62 @@ func downloadImage(md model.LayerMetadata) error {
 	return nil
 }
 
-func packageLayer(layerID, workDir, outputDir string, buildFields []string) error {
+func resolveImage(md model.LayerMetadata, fts model.Features) error {
 
-	// rebuild rootfs and fetch kernels from store (downloads on cache miss)
-	args := []string{"pkg", "--no-prompt", "--name", layerID}
+	if hasImage(md) {
+		infoCmd := exec.Command("kraft", "pkg", "info", "-u", "-o", "json", md.Image)
 
-	if plat, arch := targetOf(buildFields); plat != "" && arch != "" {
-		args = append(args, "--plat", plat, "--arch", arch)
-	}
-	args = append(args, workDir)
+		output, err := infoCmd.Output()
+		if err != nil {
+			return fmt.Errorf("pull failed for %q: %v — %s", md.Image, err, output)
+		}
 
-	output, err := exec.Command("kraft", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("packaging failed for layer %q: %v — %s", layerID, err, output)
-	}
+		var pkgs []model.Package
+		if err := json.Unmarshal(output, &pkgs); err != nil {
+			return fmt.Errorf("An error has ocurred while unmarshaling image package: %w", err)
+		}
 
-	// tar manifests package
-	archive := filepath.Join(workDir, "package.tar")
+		pkg := resolvePkgByPlat(pkgs, fts.Targets[0])
+		if pkg == nil {
+			return fmt.Errorf("An error occurred while fetching fetching image (%s) for plat %s: %w", md.Image, fts.Targets[0], err)
+		}
 
-	output, err = exec.Command("kraft", "pkg", "export", "--output", archive, layerID).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("package export failed for layer %q: %v — %s", layerID, err, output)
-	}
+		_, err = generateBuildKey(md, *pkg)
+		if err != nil {
+			return fmt.Errorf("an error has occurred while canonicalizing specs: %w", err)
+		}
 
-	// extract package to outputDir
-	if err := extractPackage(archive, outputDir); err != nil {
-		return fmt.Errorf("unpacking package for layer %q: %w", layerID, err)
 	}
 
 	return nil
 }
 
-func extractPackage(packageArchivePath, outputDir string) error {
-	// outer container untar
-	// e.g. package structure:
-	// 	- index.json, oci-layout
-	//  - blobs/sha256/manifest.json
-	//  - multiple blobs/sha256/tars (kernels and initrd)
-	tmp, err := os.MkdirTemp("", "kraft-pkg-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-
-	if err := untar(packageArchivePath, tmp); err != nil {
-		return fmt.Errorf("unpacking exported package archive: %w", err)
-	}
-
-	// unmarshal index structure with neccessary manifest data
-	var index struct {
-		Manifests []struct {
-			Digest string `json:"digest"`
-		} `json:"manifests"`
-	}
-	if err := readJSON(filepath.Join(tmp, "index.json"), &index); err != nil {
-		return fmt.Errorf("reading package index: %w", err)
-	}
-
-	// each manifest lists layer blobs; a layer is a tar containing a single
-	// unikraft/bin/* file, so unpacking them all into outputDir merges into
-	// one tree (kernel, kernel.dbg, initrd)
-	for _, m := range index.Manifests {
-		var manifest struct {
-			Layers []struct {
-				Digest string `json:"digest"`
-			} `json:"layers"`
-		}
-		if err := readJSON(blobPath(tmp, m.Digest), &manifest); err != nil {
-			return fmt.Errorf("reading manifest %s: %w", m.Digest, err)
-		}
-
-		for _, l := range manifest.Layers {
-			if err := untar(blobPath(tmp, l.Digest), outputDir); err != nil {
-				return fmt.Errorf("unpacking layer %s: %w", l.Digest, err)
-			}
+func resolvePkgByPlat(pkgs []model.Package, plat string) *model.Package {
+	for _, pkg := range pkgs {
+		if pkg.Plat == plat {
+			return &pkg
 		}
 	}
 
 	return nil
 }
 
-func targetOf(buildFields []string) (plat string, arch string) {
-	for i, f := range buildFields {
-		if i+1 >= len(buildFields) {
-			break
-		}
+func generateBuildKey(md model.LayerMetadata, pkg model.Package) (string, error) {
+	if hasImage(md) {
+		specMap := make(map[string]string)
+		specMap["kind"], specMap["digest"], specMap["plat"], specMap["ref"] = "OCI", pkg.Manifest, pkg.Plat, md.Image
 
-		switch f {
-		case "--plat", "-p":
-			plat = buildFields[i+1]
-		case "--arch", "-m":
-			arch = buildFields[i+1]
+		out, err := json.Marshal(specMap)
+		if err != nil {
+			return "", err
 		}
+		sum := sha256.Sum256(out)
+		return versionTag + hex.EncodeToString(sum[:]), nil
 	}
 
-	return plat, arch
+	return "", nil
+}
+
+func hasImage(md model.LayerMetadata) bool {
+	return strings.Trim(md.Image, " ") != ""
 }
