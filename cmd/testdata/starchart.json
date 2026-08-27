@@ -24,7 +24,7 @@
                 "id": "a0715e59-49c3-4323-bf34-fbb4ccb7e123",
                 "name": "Data Source 3",
                 "type": "file",
-                "path": "/app/data/data_3.csv",
+                "path": "testdata/data_3.csv",
                 "resourceName": "Data 3",
                 "description": "This data source contains some data."
             }

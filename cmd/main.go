@@ -1,32 +1,50 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"os"
 
-	"github.com/c12s/runner/internal/model"
-	"github.com/c12s/runner/internal/orchestration"
-	"github.com/c12s/runner/internal/validation"
+	"github.com/c12s/pgrunner"
+	"github.com/c12s/pgrunner/pkg/model"
 )
 
 func main() {
-	data, err := os.ReadFile("/app/data/starchart.json")
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	f, err := os.Open("testdata/starchart.json")
 	if err != nil {
-		panic(err)
+		log.Error("open chart", "err", err)
+		os.Exit(1)
 	}
+	defer f.Close()
 
 	var chart model.Chart
-
-	if err = json.Unmarshal(data, &chart); err != nil {
-		panic(err)
+	if err := json.NewDecoder(f).Decode(&chart); err != nil {
+		log.Error("decode chart", "err", err)
+		os.Exit(1)
 	}
 
-	v := validation.NewBuildValidator()
-	o := orchestration.NewOrchestrator(v)
-
-	if err = o.InstantiateChart(chart); err != nil {
-		fmt.Print(err)
-		return
+	cache := os.Getenv("PGRUNNER_CACHE")
+	if cache == "" {
+		cache = "/tmp/pgrunner-cache"
 	}
+	if err := os.MkdirAll(cache, 0o755); err != nil { // CacheDir must exist
+		log.Error("cache dir", "err", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	r, err := pgrunner.New(ctx, pgrunner.Config{CacheDir: cache, Logger: log})
+	if err != nil {
+		log.Error("new runner", "err", err)
+		os.Exit(1)
+	}
+
+	if err := r.InstantiateChart(ctx, chart); err != nil {
+		log.Error("instantiate", "err", err)
+		os.Exit(1)
+	}
+
 }

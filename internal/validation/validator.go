@@ -5,25 +5,27 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/c12s/runner/internal/model"
+	"github.com/c12s/pgrunner/internal/store"
+	"github.com/c12s/pgrunner/pkg/model"
+
 	"golang.org/x/sys/unix"
 )
 
-var (
-	imageDir   = os.Getenv("IMAGE_DIR")
-	buildDir   = os.Getenv("BUILD_DIR")
-	versionTag = os.Getenv("VERSION_TAG")
-)
+type BuildValidator struct {
+	imgDir string
+	bldDir string
+	store  *store.Store
+	logger *slog.Logger
+}
 
-type BuildValidator struct{}
-
-func NewBuildValidator() *BuildValidator {
-	return &BuildValidator{}
+func NewBuildValidator(l *slog.Logger, imgDir, bldDir string, s *store.Store) *BuildValidator {
+	return &BuildValidator{logger: l, imgDir: imgDir, bldDir: bldDir, store: s}
 }
 
 // general
@@ -120,13 +122,13 @@ func (v *BuildValidator) validateLayerImage(md model.LayerMetadata, fts model.Fe
 	return nil
 }
 
-func isLayerImageSaved(layerID string) bool {
-	return unix.Access(filepath.Join(imageDir, layerID, "unikraft/bin/kernel"), unix.F_OK) == nil
+func (v *BuildValidator) isLayerImageSaved(layerID string) bool {
+	return unix.Access(filepath.Join(v.imgDir, layerID, "unikraft/bin/kernel"), unix.F_OK) == nil
 }
 
-func downloadImage(md model.LayerMetadata) error {
+func (v *BuildValidator) downloadImage(md model.LayerMetadata) error {
 	// image build result location
-	outputDir := filepath.Join(imageDir, md.ID)
+	outputDir := filepath.Join(v.imgDir, md.ID)
 
 	if md.Image != "" {
 		cmd := exec.Command("kraft", "pkg", "pull", "--no-prompt", "-o", outputDir, md.Image)
@@ -148,7 +150,7 @@ func downloadImage(md model.LayerMetadata) error {
 		}
 
 		// clone repo
-		tmpRepoDir := filepath.Join(buildDir, md.ID)
+		tmpRepoDir := filepath.Join(v.bldDir, md.ID)
 		defer os.RemoveAll(tmpRepoDir)
 
 		cloneCmd := exec.Command("git", "clone", "--depth", "1", md.Build.Pull, tmpRepoDir)
@@ -178,6 +180,13 @@ func downloadImage(md model.LayerMetadata) error {
 	return nil
 }
 
+type Package struct {
+	Index    string `json:"index"`
+	Manifest string `json:"manifest"`
+	Plat     string `json:"plat"`
+	Version  string `json:"version"`
+}
+
 func resolveImage(md model.LayerMetadata, fts model.Features) error {
 
 	if hasImage(md) {
@@ -188,7 +197,7 @@ func resolveImage(md model.LayerMetadata, fts model.Features) error {
 			return fmt.Errorf("pull failed for %q: %v — %s", md.Image, err, output)
 		}
 
-		var pkgs []model.Package
+		var pkgs []Package
 		if err := json.Unmarshal(output, &pkgs); err != nil {
 			return fmt.Errorf("An error has ocurred while unmarshaling image package: %w", err)
 		}
@@ -208,7 +217,7 @@ func resolveImage(md model.LayerMetadata, fts model.Features) error {
 	return nil
 }
 
-func resolvePkgByPlat(pkgs []model.Package, plat string) *model.Package {
+func resolvePkgByPlat(pkgs []Package, plat string) *Package {
 	for _, pkg := range pkgs {
 		if pkg.Plat == plat {
 			return &pkg
@@ -218,7 +227,7 @@ func resolvePkgByPlat(pkgs []model.Package, plat string) *model.Package {
 	return nil
 }
 
-func generateBuildKey(md model.LayerMetadata, pkg model.Package) (string, error) {
+func generateBuildKey(md model.LayerMetadata, pkg Package) (string, error) {
 	if hasImage(md) {
 		specMap := make(map[string]string)
 		specMap["kind"], specMap["digest"], specMap["plat"], specMap["ref"] = "OCI", pkg.Manifest, pkg.Plat, md.Image
@@ -228,7 +237,7 @@ func generateBuildKey(md model.LayerMetadata, pkg model.Package) (string, error)
 			return "", err
 		}
 		sum := sha256.Sum256(out)
-		return versionTag + hex.EncodeToString(sum[:]), nil
+		return hex.EncodeToString(sum[:]), nil
 	}
 
 	return "", nil

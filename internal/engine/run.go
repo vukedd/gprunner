@@ -1,4 +1,4 @@
-package orchestration
+package engine
 
 import (
 	"fmt"
@@ -19,8 +19,8 @@ const rootfsMount = `"vfs.fstab=[ ""initrd0:/:extract:::"" ]"`
 // RunLayer boots a layer's kernel with kraft. kernelArgs is the unikernel's
 // command line, e.g. "/helloworld" — layers unpacked from a package no longer
 // carry the Kraftfile's cmd, so the caller has to supply it.
-func RunLayer(layerID, memory, kernelArgs string) error {
-	binDir := filepath.Join(os.Getenv("IMAGE_DIR"), layerID, "unikraft", "bin")
+func RunLayer(layerID, memory, kernelArgs, imageDir string) error {
+	binDir := filepath.Join(imageDir, layerID, "unikraft", "bin")
 
 	args := []string{"run", "--no-prompt", "--plat", "qemu", "--arch", "x86_64", "--rm"}
 

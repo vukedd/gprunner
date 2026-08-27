@@ -18,6 +18,8 @@ FROM kraftkit.sh/base:latest AS run
 
 WORKDIR /app
 
+COPY cmd/testdata ./testdata
+
 COPY --from=build /app/build.bin /usr/bin/runner
 
 ENTRYPOINT ["/usr/bin/runner"]
