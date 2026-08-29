@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/c12s/pgrunner/internal/engine"
-	"github.com/c12s/pgrunner/internal/store"
+	"github.com/c12s/pgrunner/internal/persistence"
 	"github.com/c12s/pgrunner/internal/validation"
 	"github.com/c12s/pgrunner/pkg/model"
 )
@@ -17,7 +17,7 @@ import (
 type Runner struct {
 	cfg Config
 	o   *engine.Orchestrator
-	s   *store.Store
+	s   *persistence.Store
 }
 
 type Config struct {
@@ -36,7 +36,7 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 
-	s, err := store.Open(ctx, filepath.Join(dirs.db, "pgrunner.db"))
+	s, err := persistence.Open(ctx, filepath.Join(dirs.db, "pgrunner.db"))
 	if err != nil {
 		return nil, fmt.Errorf("pgrunner: opening store: %w", err)
 	}

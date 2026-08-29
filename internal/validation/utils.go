@@ -170,4 +170,3 @@ func targetOf(buildFields []string) (plat string, arch string) {
 
 	return plat, arch
 }
-

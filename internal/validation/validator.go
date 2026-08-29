@@ -1,53 +1,59 @@
 package validation
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/c12s/pgrunner/internal/store"
+	"github.com/c12s/pgrunner/internal/persistence"
 	"github.com/c12s/pgrunner/pkg/model"
 
 	"golang.org/x/sys/unix"
 )
 
+var artifacts = []string{"kernel", "kernel.dbg", "initrd"}
+
 type BuildValidator struct {
 	imgDir string
 	bldDir string
-	store  *store.Store
+	store  *persistence.Store
 	logger *slog.Logger
 }
 
-func NewBuildValidator(l *slog.Logger, imgDir, bldDir string, s *store.Store) *BuildValidator {
+func NewBuildValidator(l *slog.Logger, imgDir, bldDir string, s *persistence.Store) *BuildValidator {
 	return &BuildValidator{logger: l, imgDir: imgDir, bldDir: bldDir, store: s}
 }
 
 // general
-func (v *BuildValidator) ValidateLayers(layers model.ChartConfig) error {
+func (v *BuildValidator) ValidateLayers(ctx context.Context, layers model.ChartConfig) error {
 	procedures, triggers, events := layers.StoredProcedures, layers.EventTriggers, layers.Events
 	datasources := layers.DataSources
 
 	for _, pcd := range procedures {
-		if err := v.validateLayer(pcd.Features, pcd.Metadata, pcd.Links, datasources); err != nil {
+		if err := v.validateLayer(ctx, pcd.Features, pcd.Metadata, pcd.Links, datasources); err != nil {
 			return err
 		}
 	}
 
 	for _, et := range triggers {
-		if err := v.validateLayer(et.Features, et.Metadata, et.Links, datasources); err != nil {
+		if err := v.validateLayer(ctx, et.Features, et.Metadata, et.Links, datasources); err != nil {
 			return err
 		}
 	}
 
 	// event structure doesn't contain links so empty struct is passed
 	for _, e := range events {
-		if err := v.validateLayer(e.Features, e.Metadata, model.Links{}, datasources); err != nil {
+		if err := v.validateLayer(ctx, e.Features, e.Metadata, model.Links{}, datasources); err != nil {
 			return err
 		}
 	}
@@ -55,12 +61,12 @@ func (v *BuildValidator) ValidateLayers(layers model.ChartConfig) error {
 	return nil
 }
 
-func (v *BuildValidator) validateLayer(fts model.Features, md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) error {
+func (v *BuildValidator) validateLayer(ctx context.Context, fts model.Features, md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) error {
 	if err := v.validateLinks(links, md, datasources); err != nil {
 		return err
 	}
 
-	return v.validateLayerImage(md, fts)
+	return v.validateLayerImage(ctx, md, fts)
 }
 
 // data source validation
@@ -86,8 +92,8 @@ func (v *BuildValidator) validateLinks(links model.Links, md model.LayerMetadata
 func (v *BuildValidator) validateDataSource(ds model.DataSource) error {
 	switch ds.Type {
 	case model.DataSourceFileType:
-		if err := checkFileAccess(ds); err != nil {
-			return err
+		if !resolveDirectory(ds.Path) {
+			return fmt.Errorf("datasource %s on path %s not found", ds.Name, ds.Path)
 		}
 	default:
 		return fmt.Errorf("invalid data source type: %v", ds.Type)
@@ -96,85 +102,14 @@ func (v *BuildValidator) validateDataSource(ds model.DataSource) error {
 	return nil
 }
 
-func checkFileAccess(ds model.DataSource) error {
-	if exists := unix.Access(ds.Path, unix.F_OK) == nil; !exists {
-		return fmt.Errorf("an error has occurred while validating %s on path %s", ds.Name, ds.Path)
-	}
-
-	return nil
+func resolveDirectory(path string) bool {
+	return unix.Access(path, unix.F_OK) == nil
 }
 
 // image validation
-func (v *BuildValidator) validateLayerImage(md model.LayerMetadata, fts model.Features) error {
-	// if isLayerImageSaved(md.ID) {
-	// 	fmt.Printf("image is already downloaded. Layer Name: %s\n", md.Name)
-	// 	return nil
-	// }
-
-	// if err := downloadImage(md); err != nil {
-	// 	return err
-	// }
-
-	if err := resolveImage(md, fts); err != nil {
+func (v *BuildValidator) validateLayerImage(ctx context.Context, md model.LayerMetadata, fts model.Features) error {
+	if err := v.resolveImage(ctx, md, fts); err != nil {
 		return fmt.Errorf("%w", err)
-	}
-
-	return nil
-}
-
-func (v *BuildValidator) isLayerImageSaved(layerID string) bool {
-	return unix.Access(filepath.Join(v.imgDir, layerID, "unikraft/bin/kernel"), unix.F_OK) == nil
-}
-
-func (v *BuildValidator) downloadImage(md model.LayerMetadata) error {
-	// image build result location
-	outputDir := filepath.Join(v.imgDir, md.ID)
-
-	if md.Image != "" {
-		cmd := exec.Command("kraft", "pkg", "pull", "--no-prompt", "-o", outputDir, md.Image)
-
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("pull failed for %q: %v — %s", md.Image, err, output)
-		}
-	} else {
-		// chart has no image and no build params
-		if md.Build == nil {
-			return fmt.Errorf("layer %q has no image reference and no build config", md.Name)
-		}
-
-		// command token extraction
-		cmdFields := strings.Fields(md.Build.Command)
-		if len(cmdFields) == 0 {
-			return fmt.Errorf("layer %q has an empty build command", md.Name)
-		}
-
-		// clone repo
-		tmpRepoDir := filepath.Join(v.bldDir, md.ID)
-		defer os.RemoveAll(tmpRepoDir)
-
-		cloneCmd := exec.Command("git", "clone", "--depth", "1", md.Build.Pull, tmpRepoDir)
-		cloneOutput, err := cloneCmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("repo clone failed for %q: %v — %s", md.Image, err, cloneOutput)
-		}
-
-		// build image
-		workDir := filepath.Join(tmpRepoDir, md.Build.Workdir)
-
-		args := append([]string{}, cmdFields[1:]...)
-		args = append(args, workDir)
-
-		buildCmd := exec.Command(cmdFields[0], args...)
-		buildOutput, err := buildCmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("image build failed for %q: %v — %s", md.Name, err, buildOutput)
-		}
-
-		// pack kernels (and optionally initrd) into to the outputDir
-		if err := packageLayer(md.ID, workDir, outputDir, cmdFields); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -187,8 +122,9 @@ type Package struct {
 	Version  string `json:"version"`
 }
 
-func resolveImage(md model.LayerMetadata, fts model.Features) error {
+func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadata, fts model.Features) error {
 
+	var spec, buildKey string
 	if hasImage(md) {
 		infoCmd := exec.Command("kraft", "pkg", "info", "-u", "-o", "json", md.Image)
 
@@ -199,22 +135,134 @@ func resolveImage(md model.LayerMetadata, fts model.Features) error {
 
 		var pkgs []Package
 		if err := json.Unmarshal(output, &pkgs); err != nil {
-			return fmt.Errorf("An error has ocurred while unmarshaling image package: %w", err)
+			return fmt.Errorf("unmarshaling image package: %w", err)
 		}
 
 		pkg := resolvePkgByPlat(pkgs, fts.Targets[0])
 		if pkg == nil {
-			return fmt.Errorf("An error occurred while fetching fetching image (%s) for plat %s: %w", md.Image, fts.Targets[0], err)
+			return fmt.Errorf("fetching fetching image (%s) for plat %s: %w", md.Image, fts.Targets[0], err)
 		}
 
-		_, err = generateBuildKey(md, *pkg)
+		spec, buildKey, err = generateBuildKeyFromOCI(md, *pkg)
 		if err != nil {
-			return fmt.Errorf("an error has occurred while canonicalizing specs: %w", err)
+			return fmt.Errorf("canonicalizing specs: %w", err)
 		}
-
+	} else {
+		// TODO
 	}
 
+	contentKey, ok, err := v.store.GetContentKeyByBuildKey(ctx, buildKey)
+	if err != nil {
+		return fmt.Errorf("fetching contentKey: %w", err)
+	}
+
+	if contentKey == "" && !ok {
+		imageTempDir, err := v.downloadImage(ctx, md)
+		if err != nil {
+			return fmt.Errorf("downloading image: %w", err)
+		}
+
+		contentKey, size, err := generateContentKey(imageTempDir)
+		if err != nil {
+			return fmt.Errorf("building contentKey: %w", err)
+		}
+
+		artifactDir := filepath.Join(v.imgDir, contentKey)
+		if resolveDirectory(artifactDir) {
+			if err := os.RemoveAll(imageTempDir); err != nil {
+				return fmt.Errorf("removing staging dir %s: %w", imageTempDir, err)
+			}
+		} else if err := os.Rename(imageTempDir, artifactDir); err != nil {
+			return fmt.Errorf("publishing image %s: %w", artifactDir, err)
+		}
+
+		if err = v.store.SaveImageMetadata(ctx, spec, buildKey, contentKey, size); err != nil {
+			return fmt.Errorf("saving image metadata: %w", err)
+		}
+	} else {
+		return nil
+	}
 	return nil
+}
+
+func (v *BuildValidator) downloadImage(ctx context.Context, md model.LayerMetadata) (string, error) {
+	// image build result location
+	outputDir := filepath.Join(v.imgDir, "stage-"+md.ID)
+
+	if md.Image != "" {
+		cmd := exec.Command("kraft", "pkg", "pull", "--no-prompt", "-o", outputDir, md.Image)
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("pull failed for %q: %v — %s", md.Image, err, output)
+		}
+	} else {
+		// chart has no image and no build params
+		if md.Build == nil {
+			return "", fmt.Errorf("layer %q has no image reference and no build config", md.Name)
+		}
+
+		// command token extraction
+		cmdFields := strings.Fields(md.Build.Command)
+		if len(cmdFields) == 0 {
+			return "", fmt.Errorf("layer %q has an empty build command", md.Name)
+		}
+
+		// clone repo
+		tmpRepoDir := filepath.Join(v.bldDir, md.ID)
+		defer os.RemoveAll(tmpRepoDir)
+
+		cloneCmd := exec.Command("git", "clone", "--depth", "1", md.Build.Pull, tmpRepoDir)
+		cloneOutput, err := cloneCmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("repo clone failed for %q: %v — %s", md.Image, err, cloneOutput)
+		}
+
+		// build image
+		workDir := filepath.Join(tmpRepoDir, md.Build.Workdir)
+
+		args := append([]string{}, cmdFields[1:]...)
+		args = append(args, workDir)
+
+		buildCmd := exec.Command(cmdFields[0], args...)
+		buildOutput, err := buildCmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("image build failed for %q: %v — %s", md.Name, err, buildOutput)
+		}
+
+		// pack kernels (and optionally initrd) into to the outputDir and returns it
+		if err := packageLayer(md.ID, workDir, outputDir, cmdFields); err != nil {
+			return "", err
+		}
+	}
+
+	return outputDir, nil
+}
+
+func generateContentKey(imageDir string) (id string, size int64, err error) {
+	outer := sha256.New()
+
+	for _, name := range artifacts {
+		f, err := os.Open(filepath.Join(imageDir, "unikraft", "bin", name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", 0, fmt.Errorf("hashing %s: %w", name, err)
+		}
+
+		inner := sha256.New()
+		n, err := io.Copy(inner, f)
+		f.Close()
+		if err != nil {
+			return "", 0, fmt.Errorf("hashing %s: %w", name, err)
+		}
+
+		size += n
+		fmt.Fprintf(outer, "%s\x00%x\n", name, inner.Sum(nil))
+	}
+
+	return hex.EncodeToString(outer.Sum(nil)), size, nil
 }
 
 func resolvePkgByPlat(pkgs []Package, plat string) *Package {
@@ -227,20 +275,20 @@ func resolvePkgByPlat(pkgs []Package, plat string) *Package {
 	return nil
 }
 
-func generateBuildKey(md model.LayerMetadata, pkg Package) (string, error) {
+func generateBuildKeyFromOCI(md model.LayerMetadata, pkg Package) (spec string, key string, err error) {
 	if hasImage(md) {
 		specMap := make(map[string]string)
 		specMap["kind"], specMap["digest"], specMap["plat"], specMap["ref"] = "OCI", pkg.Manifest, pkg.Plat, md.Image
 
-		out, err := json.Marshal(specMap)
+		spec, err := json.Marshal(specMap)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		sum := sha256.Sum256(out)
-		return hex.EncodeToString(sum[:]), nil
+		sum := sha256.Sum256(spec)
+		return string(spec), hex.EncodeToString(sum[:]), nil
 	}
 
-	return "", nil
+	return "", "", nil
 }
 
 func hasImage(md model.LayerMetadata) bool {

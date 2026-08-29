@@ -21,7 +21,7 @@ func NewOrchestrator(v *validation.BuildValidator, l *slog.Logger, imgDir string
 
 func (o *Orchestrator) InstantiateChart(ctx context.Context, chart model.Chart) error {
 	layers := chart.ChartData
-	if err := o.v.ValidateLayers(layers); err != nil {
+	if err := o.v.ValidateLayers(ctx, layers); err != nil {
 		return fmt.Errorf("an error has occurred while validating layers: %w", err)
 	}
 
