@@ -93,10 +93,11 @@ func (v *BuildValidator) validateLinks(links model.Links, md model.LayerMetadata
 		}
 	}
 
+	// soft links aren't mandatory for layer start up
 	for _, sl := range links.SoftLinks {
 		ds := datasources[sl]
 		if err := v.validateDataSource(ds); err != nil {
-			fmt.Printf("soft link validation failed: %v\n", err)
+			v.logger.Warn("soft link validation failed", "layer", md.Name, "dataSource", sl, "err", err)
 		}
 	}
 
@@ -107,10 +108,10 @@ func (v *BuildValidator) validateDataSource(ds model.DataSource) error {
 	switch ds.Type {
 	case model.DataSourceFileType:
 		if !resolveDirectory(ds.Path) {
-			return fmt.Errorf("datasource %s on path %s not found", ds.Name, ds.Path)
+			return fmt.Errorf("data source %s on path %s: %w", ds.Name, ds.Path, ErrDataSourceMissing)
 		}
 	default:
-		return fmt.Errorf("invalid data source type: %v", ds.Type)
+		return fmt.Errorf("data source %s of type %q: %w", ds.Name, ds.Type, ErrDataSourceType)
 	}
 
 	return nil
@@ -120,6 +121,7 @@ func resolveDirectory(dirPath string) bool {
 	return unix.Access(dirPath, unix.F_OK) == nil
 }
 
+// Package, image metadata representation
 type Package struct {
 	Index    string `json:"index"`
 	Manifest string `json:"manifest"`
@@ -127,6 +129,8 @@ type Package struct {
 	Version  string `json:"version"`
 }
 
+// resolveImage, checks the image cache, pulls image, builds it (remote repo pull), returns contentKey via which
+// the image artifact is accessed
 func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadata, fts model.Features) (string, error) {
 
 	var spec, buildKey string
@@ -149,11 +153,11 @@ func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadat
 		}
 
 		if len(fts.Targets) == 0 {
-			return "", fmt.Errorf("no target provided for layer %s", md.Name)
+			return "", fmt.Errorf("layer %q: %w", md.Name, ErrNoTarget)
 		}
 		pkg := resolvePkgByPlat(pkgs, fts.Targets[0])
 		if pkg == nil {
-			return "", fmt.Errorf("no package for this platform: %s", fts.Targets[0])
+			return "", fmt.Errorf("image %q on platform %s: %w", md.Image, fts.Targets[0], ErrPlatUnavailable)
 		}
 
 		spec, buildKey, err = generateBuildKeyFromOCIRef(md, *pkg)
@@ -163,7 +167,7 @@ func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadat
 	} else {
 		// chart has no image and no build params
 		if md.Build == nil {
-			return "", fmt.Errorf("layer %q has no image reference and no build config", md.Name)
+			return "", fmt.Errorf("layer %q: %w", md.Name, ErrNoSource)
 		}
 
 		commitSHA, err := resolveCommit(ctx, md.Build.Pull)
@@ -179,90 +183,113 @@ func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadat
 
 	contentKey, ok, err := v.store.GetContentKeyByBuildKey(ctx, buildKey)
 	if err != nil {
-		return "", fmt.Errorf("fetching contentKey: %w", err)
+		return "", fmt.Errorf("looking up build key: %w", err)
 	}
 
-	if contentKey == "" || !ok {
-		imageTempDir, err := v.downloadImage(ctx, md)
-		if err != nil {
-			return "", fmt.Errorf("downloading image: %w", err)
-		}
+	if ok && contentKey != "" {
+		v.logger.Debug("image cache hit", "layer", md.Name, "contentKey", contentKey)
+		return contentKey, nil
+	}
 
-		newContentKey, size, err := generateContentKey(imageTempDir)
-		if err != nil {
-			return "", fmt.Errorf("building contentKey: %w", err)
-		}
+	v.logger.Info("image cache miss, resolving", "layer", md.Name)
 
-		artifactDir := filepath.Join(v.imgDir, newContentKey)
-		if resolveDirectory(artifactDir) {
-			if err := os.RemoveAll(imageTempDir); err != nil {
-				return "", fmt.Errorf("removing staging dir %s: %w", imageTempDir, err)
-			}
-		} else if err := os.Rename(imageTempDir, artifactDir); err != nil {
+	// a staging directory unique to this attempt: a fixed path would let a
+	// failed attempt's leftovers merge into the next one and be hashed into
+	// its content key, and would collide between concurrent instantiations
+	stageDir, err := os.MkdirTemp(v.bldDir, "stage-"+md.ID+"-")
+	if err != nil {
+		return "", fmt.Errorf("creating staging directory: %w", err)
+	}
+
+	// publishing renames the directory away, so this is a no-op on the success
+	// path and a rollback on every failure below
+	defer v.removeAll(stageDir)
+
+	if err := v.downloadImage(ctx, md, stageDir); err != nil {
+		return "", fmt.Errorf("fetching image for layer %q: %w", md.Name, err)
+	}
+
+	contentKey, size, err := generateContentKey(stageDir)
+	if err != nil {
+		return "", fmt.Errorf("hashing image for layer %q: %w", md.Name, err)
+	}
+
+	// an existing directory already holds these exact bytes, so the staging
+	// copy is redundant and the deferred cleanup discards it
+	artifactDir := filepath.Join(v.imgDir, contentKey)
+	if !resolveDirectory(artifactDir) {
+		if err := os.Rename(stageDir, artifactDir); err != nil {
 			return "", fmt.Errorf("publishing image %s: %w", artifactDir, err)
 		}
-
-		if err = v.store.SaveImageMetadata(ctx, spec, buildKey, newContentKey, size); err != nil {
-			return "", fmt.Errorf("saving image metadata: %w", err)
-		}
-
-		contentKey = newContentKey
 	}
+
+	// the artifact is content-addressed, so a failure here leaves a directory
+	// that is valid but unindexed: the next resolution of this layer
+	// recomputes the same content key and reuses it
+	if err := v.store.SaveImageMetadata(ctx, spec, buildKey, contentKey, size); err != nil {
+		return "", fmt.Errorf("indexing image %s: %w", contentKey, err)
+	}
+
+	v.logger.Info("image published", "layer", md.Name, "contentKey", contentKey, "bytes", size)
 
 	return contentKey, nil
 }
 
-func (v *BuildValidator) downloadImage(ctx context.Context, md model.LayerMetadata) (string, error) {
-	// image build result location
-	outputDir := filepath.Join(v.imgDir, "stage-"+md.ID)
-
+// downloadImage populates stageDir with the layer's build artifacts, either by
+// pulling a published image or by cloning and building the layer's repository.
+// !!! The caller owns stageDir and is responsible for removing it !!!
+func (v *BuildValidator) downloadImage(ctx context.Context, md model.LayerMetadata, stageDir string) error {
 	if hasImage(md) {
-		cmd := exec.CommandContext(ctx, "kraft", "pkg", "pull", "--no-prompt", "-o", outputDir, md.Image)
+		cmd := exec.CommandContext(ctx, "kraft", "pkg", "pull", "--no-prompt", "-o", stageDir, md.Image)
 
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return "", fmt.Errorf("pull failed for %q: %w — %s", md.Image, err, output)
-		}
-	} else {
-		// command token extraction
-		cmdFields, err := buildFields(md)
-		if err != nil {
-			return "", err
+			return fmt.Errorf("pull failed for %q: %w — %s", md.Image, err, output)
 		}
 
-		// clone repo
-		tmpRepoDir := filepath.Join(v.bldDir, md.ID)
-		defer os.RemoveAll(tmpRepoDir)
-
-		cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", md.Build.Pull, tmpRepoDir)
-		cloneCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
-
-		cloneOutput, err := cloneCmd.CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("repo clone failed for %q: %w — %s", md.Build.Pull, err, cloneOutput)
-		}
-
-		// build image
-		workDir := filepath.Join(tmpRepoDir, path.Clean("/"+md.Build.Workdir))
-
-		args := append([]string{}, cmdFields[1:]...)
-		args = append(args, workDir)
-
-		buildCmd := exec.CommandContext(ctx, cmdFields[0], args...)
-		buildOutput, err := buildCmd.CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("image build failed for %q: %w — %s", md.Name, err, buildOutput)
-		}
-
-		// pack kernels (and optionally initrd) into to the outputDir and returns it
-		if err := packageLayer(ctx, md.ID, workDir, outputDir, cmdFields); err != nil {
-			return "", err
-		}
+		return nil
 	}
 
-	return outputDir, nil
+	// command token extraction
+	cmdFields, err := buildFields(md)
+	if err != nil {
+		return err
+	}
+
+	// clone dir is unique per attempt, otherwise concurrent builds of one layer would share it
+	tmpRepoDir, err := os.MkdirTemp(v.bldDir, "repo-"+md.ID+"-")
+	if err != nil {
+		return fmt.Errorf("creating clone directory: %w", err)
+	}
+	defer v.removeAll(tmpRepoDir)
+
+	// if prompted abort to avoid infinite wait time
+	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", md.Build.Pull, tmpRepoDir)
+	cloneCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+
+	cloneOutput, err := cloneCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("repo clone failed for %q: %w — %s", md.Build.Pull, err, cloneOutput)
+	}
+
+	// build image
+	workDir := filepath.Join(tmpRepoDir, path.Clean("/"+md.Build.Workdir))
+
+	args := append([]string{}, cmdFields[1:]...)
+	args = append(args, workDir)
+
+	buildCmd := exec.CommandContext(ctx, cmdFields[0], args...)
+	buildOutput, err := buildCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("image build failed for %q: %w — %s", md.Name, err, buildOutput)
+	}
+
+	// pack kernels (and optionally initrd) into the staging directory
+	return v.packageLayer(ctx, md.Name, workDir, stageDir, cmdFields)
 }
 
+// generateContentKey, generates contentKey which uniquely identifies cached image
+// artifacts
 func generateContentKey(imageDir string) (id string, size int64, err error) {
 	outer := sha256.New()
 
@@ -289,12 +316,15 @@ func generateContentKey(imageDir string) (id string, size int64, err error) {
 	return hex.EncodeToString(outer.Sum(nil)), size, nil
 }
 
+// resolveCommit, resolves pull repo default branch HEAD digest
 func resolveCommit(ctx context.Context, pull string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "ls-remote", pull, "HEAD")
+	// if prompted abort to avoid infinite wait time
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 
 	out, err := cmd.Output()
 	if err != nil {
+		// if present, extracts the error message from the output
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			return "", fmt.Errorf("resolving %s: %w — %s", pull, err, ee.Stderr)
@@ -302,13 +332,15 @@ func resolveCommit(ctx context.Context, pull string) (string, error) {
 		return "", fmt.Errorf("resolving %s: %w", pull, err)
 	}
 
+	// ls-remote exits 0 and prints nothing when the ref does not exist
 	fields := strings.Fields(string(out))
 	if len(fields) == 0 {
-		return "", fmt.Errorf("no HEAD ref in %s", pull)
+		return "", fmt.Errorf("%s: %w", pull, ErrNoRemoteRef)
 	}
 	return fields[0], nil
 }
 
+// resolvePkgByPlat, returns package for provided platform
 func resolvePkgByPlat(pkgs []Package, plat string) *Package {
 	for _, pkg := range pkgs {
 		if pkg.Plat == plat {
@@ -319,6 +351,8 @@ func resolvePkgByPlat(pkgs []Package, plat string) *Package {
 	return nil
 }
 
+// generateBuildKeyFromOCIRef, generates buildKey which will potentially help us avoid the costs
+// of building an image. Returns spec (buildParams, persisted in db for debugging), buildKey, error
 func generateBuildKeyFromOCIRef(md model.LayerMetadata, pkg Package) (string, string, error) {
 	specMap := make(map[string]string)
 	specMap["kind"], specMap["digest"], specMap["plat"], specMap["ref"] = "OCI", pkg.Manifest, pkg.Plat, md.Image
@@ -326,6 +360,8 @@ func generateBuildKeyFromOCIRef(md model.LayerMetadata, pkg Package) (string, st
 	return hashSpec(specMap)
 }
 
+// generateBuildKeyFromRemoteRepo, generates buildKey which will potentially help us avoid the costs
+// of building an image. Returns spec (buildParams, persisted in db for debugging), buildKey, error
 func generateBuildKeyFromRemoteRepo(md model.LayerMetadata, commitSHA string) (spec string, key string, err error) {
 	fields, err := buildFields(md)
 	if err != nil {
@@ -340,12 +376,7 @@ func generateBuildKeyFromRemoteRepo(md model.LayerMetadata, commitSHA string) (s
 	return hashSpec(specMap)
 }
 
-func hasImage(md model.LayerMetadata) bool {
-	return strings.Trim(md.Image, " ") != ""
-}
-
-// hashSpec canonicalizes a build spec and derives its build key. json.Marshal
-// canonizes the fields
+// hashSpec canonicalizes a build spec and derives its build key.
 func hashSpec(specMap map[string]string) (spec string, key string, err error) {
 	specBytes, err := json.Marshal(specMap)
 	if err != nil {
@@ -356,11 +387,22 @@ func hashSpec(specMap map[string]string) (spec string, key string, err error) {
 	return string(specBytes), hex.EncodeToString(sum[:]), nil
 }
 
+// buildFields, tokenizes build commands
 func buildFields(md model.LayerMetadata) ([]string, error) {
 	fields := strings.Fields(md.Build.Command)
 	if len(fields) == 0 {
-		return nil, fmt.Errorf("layer %q has an empty build command", md.Name)
+		return nil, fmt.Errorf("layer %q: %w", md.Name, ErrEmptyCommand)
 	}
 
 	return fields, nil
+}
+
+func (v *BuildValidator) removeAll(dir string) {
+	if err := os.RemoveAll(dir); err != nil {
+		v.logger.Warn("removing directory", "dir", dir, "err", err)
+	}
+}
+
+func hasImage(md model.LayerMetadata) bool {
+	return strings.Trim(md.Image, " ") != ""
 }

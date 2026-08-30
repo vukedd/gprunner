@@ -27,7 +27,7 @@ func readJSON(path string, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-// untar takes archive and the destination where the archive should be unpacked
+// untar, takes archive and the destination where the archive should be unpacked
 func untar(archive, dst string) error {
 	f, err := os.Open(archive)
 	if err != nil {
@@ -75,6 +75,7 @@ func untar(archive, dst string) error {
 	}
 }
 
+// extractPackage,
 func extractPackage(packageArchivePath, outputDir string) error {
 	// outer container untar
 	// e.g. package structure:
@@ -124,10 +125,12 @@ func extractPackage(packageArchivePath, outputDir string) error {
 	return nil
 }
 
-func packageLayer(ctx context.Context, layerID, workDir, outputDir string, buildFields []string) error {
+// packageLayer,
+func (v *BuildValidator) packageLayer(ctx context.Context, layerName, workDir, outputDir string, buildFields []string) error {
+	pkgName := filepath.Base(outputDir)
 
 	// rebuild rootfs and fetch kernels from store (downloads on cache miss)
-	args := []string{"pkg", "--no-prompt", "--name", layerID}
+	args := []string{"pkg", "--no-prompt", "--name", pkgName}
 
 	if plat, arch := targetOf(buildFields); plat != "" && arch != "" {
 		args = append(args, "--plat", plat, "--arch", arch)
@@ -136,20 +139,27 @@ func packageLayer(ctx context.Context, layerID, workDir, outputDir string, build
 
 	output, err := exec.CommandContext(ctx, "kraft", args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("packaging failed for layer %q: %w — %s", layerID, err, output)
+		return fmt.Errorf("packaging failed for layer %q: %w — %s", layerName, err, output)
 	}
 
-	// tar manifests package
+	defer func() {
+		out, err := exec.CommandContext(ctx, "kraft", "pkg", "remove", "--no-prompt", "-n", pkgName).CombinedOutput()
+		if err != nil {
+			v.logger.Warn("removing package from kraft store", "pkg", pkgName, "err", err, "output", out)
+		}
+	}()
+
+	// export stored package as tar
 	archive := filepath.Join(workDir, "package.tar")
 
-	output, err = exec.CommandContext(ctx, "kraft", "pkg", "export", "--output", archive, layerID).CombinedOutput()
+	output, err = exec.CommandContext(ctx, "kraft", "pkg", "export", "--output", archive, pkgName).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("package export failed for layer %q: %w — %s", layerID, err, output)
+		return fmt.Errorf("package export failed for layer %q: %w — %s", layerName, err, output)
 	}
 
 	// extract package to outputDir
 	if err := extractPackage(archive, outputDir); err != nil {
-		return fmt.Errorf("unpacking package for layer %q: %w", layerID, err)
+		return fmt.Errorf("unpacking package for layer %q: %w", layerName, err)
 	}
 
 	return nil
