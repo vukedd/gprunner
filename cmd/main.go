@@ -13,7 +13,7 @@ import (
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	f, err := os.Open("testdata/starchart.json")
+	f, err := os.Open("test_data/starchart.json")
 	if err != nil {
 		log.Error("open chart", "err", err)
 		os.Exit(1)

@@ -18,7 +18,7 @@ FROM kraftkit.sh/base:latest AS run
 
 WORKDIR /app
 
-COPY cmd/testdata ./testdata
+COPY cmd/test_data ./test_data
 
 COPY --from=build /app/build.bin /usr/bin/runner
 
