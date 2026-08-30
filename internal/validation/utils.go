@@ -2,6 +2,7 @@ package validation
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -123,7 +124,7 @@ func extractPackage(packageArchivePath, outputDir string) error {
 	return nil
 }
 
-func packageLayer(layerID, workDir, outputDir string, buildFields []string) error {
+func packageLayer(ctx context.Context, layerID, workDir, outputDir string, buildFields []string) error {
 
 	// rebuild rootfs and fetch kernels from store (downloads on cache miss)
 	args := []string{"pkg", "--no-prompt", "--name", layerID}
@@ -133,17 +134,17 @@ func packageLayer(layerID, workDir, outputDir string, buildFields []string) erro
 	}
 	args = append(args, workDir)
 
-	output, err := exec.Command("kraft", args...).CombinedOutput()
+	output, err := exec.CommandContext(ctx, "kraft", args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("packaging failed for layer %q: %v — %s", layerID, err, output)
+		return fmt.Errorf("packaging failed for layer %q: %w — %s", layerID, err, output)
 	}
 
 	// tar manifests package
 	archive := filepath.Join(workDir, "package.tar")
 
-	output, err = exec.Command("kraft", "pkg", "export", "--output", archive, layerID).CombinedOutput()
+	output, err = exec.CommandContext(ctx, "kraft", "pkg", "export", "--output", archive, layerID).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("package export failed for layer %q: %v — %s", layerID, err, output)
+		return fmt.Errorf("package export failed for layer %q: %w — %s", layerID, err, output)
 	}
 
 	// extract package to outputDir
