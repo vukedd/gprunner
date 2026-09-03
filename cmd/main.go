@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/c12s/pgrunner"
-	"github.com/c12s/pgrunner/pkg/model"
+	pgrunner "github.com/c12s/gprunner"
+	"github.com/c12s/gprunner/pkg/model"
 )
 
 func main() {
