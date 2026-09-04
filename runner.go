@@ -10,7 +10,7 @@ import (
 
 	"github.com/c12s/gprunner/internal/engine"
 	"github.com/c12s/gprunner/internal/persistence"
-	"github.com/c12s/gprunner/internal/validation"
+	"github.com/c12s/gprunner/internal/resolver"
 	"github.com/c12s/gprunner/pkg/model"
 )
 
@@ -41,8 +41,8 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 		return nil, fmt.Errorf("pgrunner: opening store: %w", err)
 	}
 
-	v := validation.NewBuildValidator(cfg.Logger, dirs.image, dirs.build, s)
-	o := engine.NewOrchestrator(v, cfg.Logger, dirs.image)
+	r := resolver.NewBuildResolver(cfg.Logger, dirs.image, dirs.build, s)
+	o := engine.NewOrchestrator(r, cfg.Logger, dirs.image)
 
 	return &Runner{cfg: cfg, o: o, s: s}, nil
 }

@@ -1,4 +1,4 @@
-package validation
+package resolver
 
 import (
 	"context"
@@ -24,24 +24,24 @@ import (
 
 var artifacts = []string{"kernel", "initrd"} //kernel.dbg
 
-type BuildValidator struct {
+type BuildResolver struct {
 	imgDir string
 	bldDir string
 	store  *persistence.Store
 	logger *slog.Logger
 }
 
-func NewBuildValidator(l *slog.Logger, imgDir, bldDir string, s *persistence.Store) *BuildValidator {
-	return &BuildValidator{logger: l, imgDir: imgDir, bldDir: bldDir, store: s}
+func NewBuildResolver(l *slog.Logger, imgDir, bldDir string, s *persistence.Store) *BuildResolver {
+	return &BuildResolver{logger: l, imgDir: imgDir, bldDir: bldDir, store: s}
 }
 
 // general
-func (v *BuildValidator) ValidateLayers(ctx context.Context, layers model.ChartConfig) (map[string]string, error) {
+func (r *BuildResolver) ResolveLayers(ctx context.Context, layers model.ChartConfig) (map[string]string, error) {
 	procedures, triggers, events := layers.StoredProcedures, layers.EventTriggers, layers.Events
 	datasources, imageMap := layers.DataSources, make(map[string]string)
 
 	for _, pcd := range procedures {
-		contentKey, err := v.validateLayer(ctx, pcd.Features, pcd.Metadata, pcd.Links, datasources)
+		contentKey, err := r.resolveLayer(ctx, pcd.Features, pcd.Metadata, pcd.Links, datasources)
 		if err != nil {
 			return nil, err
 		}
@@ -50,7 +50,7 @@ func (v *BuildValidator) ValidateLayers(ctx context.Context, layers model.ChartC
 	}
 
 	for _, et := range triggers {
-		contentKey, err := v.validateLayer(ctx, et.Features, et.Metadata, et.Links, datasources)
+		contentKey, err := r.resolveLayer(ctx, et.Features, et.Metadata, et.Links, datasources)
 		if err != nil {
 			return nil, err
 		}
@@ -60,7 +60,7 @@ func (v *BuildValidator) ValidateLayers(ctx context.Context, layers model.ChartC
 
 	// event structure doesn't contain links so empty struct is passed
 	for _, e := range events {
-		contentKey, err := v.validateLayer(ctx, e.Features, e.Metadata, model.Links{}, datasources)
+		contentKey, err := r.resolveLayer(ctx, e.Features, e.Metadata, model.Links{}, datasources)
 		if err != nil {
 			return nil, err
 		}
@@ -71,8 +71,8 @@ func (v *BuildValidator) ValidateLayers(ctx context.Context, layers model.ChartC
 	return imageMap, nil
 }
 
-func (v *BuildValidator) validateLayer(ctx context.Context, fts model.Features, md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) (string, error) {
-	if err := v.validateLinks(links, md, datasources); err != nil {
+func (v *BuildResolver) resolveLayer(ctx context.Context, fts model.Features, md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) (string, error) {
+	if err := v.resolveLinks(links, md, datasources); err != nil {
 		return "", err
 	}
 
@@ -85,10 +85,10 @@ func (v *BuildValidator) validateLayer(ctx context.Context, fts model.Features, 
 }
 
 // data source validation
-func (v *BuildValidator) validateLinks(links model.Links, md model.LayerMetadata, datasources map[string]model.DataSource) error {
+func (r *BuildResolver) resolveLinks(links model.Links, md model.LayerMetadata, datasources map[string]model.DataSource) error {
 	for _, hl := range links.HardLinks {
 		ds := datasources[hl]
-		if err := v.validateDataSource(ds, true); err != nil {
+		if err := r.resolveDataSource(ds, true); err != nil {
 			return fmt.Errorf("hard link validation failed: %w", err)
 		}
 	}
@@ -96,15 +96,15 @@ func (v *BuildValidator) validateLinks(links model.Links, md model.LayerMetadata
 	// soft links aren't mandatory for layer start up
 	for _, sl := range links.SoftLinks {
 		ds := datasources[sl]
-		if err := v.validateDataSource(ds, false); err != nil {
-			v.logger.Warn("soft link validation failed", "layer", md.Name, "dataSource", sl, "err", err)
+		if err := r.resolveDataSource(ds, false); err != nil {
+			r.logger.Warn("soft link validation failed", "layer", md.Name, "dataSource", sl, "err", err)
 		}
 	}
 
 	return nil
 }
 
-func (v *BuildValidator) validateDataSource(ds model.DataSource, isHardLinked bool) error {
+func (r *BuildResolver) resolveDataSource(ds model.DataSource, isHardLinked bool) error {
 	switch ds.Type {
 	case model.DataSourceFileType:
 		if !resolveDirectory(ds.Path) {
@@ -143,7 +143,7 @@ type Package struct {
 
 // resolveImage, checks the image cache, pulls image, builds it (remote repo pull), returns contentKey via which
 // the image artifact is accessed
-func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadata, fts model.Features) (string, error) {
+func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata, fts model.Features) (string, error) {
 
 	var spec, buildKey string
 	if hasImage(md) {
@@ -178,7 +178,7 @@ func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadat
 		}
 	} else {
 		// chart has no image and no build params
-		if md.Build == nil {
+		if !buildExists(&md) {
 			return "", fmt.Errorf("layer %q: %w", md.Name, ErrNoSource)
 		}
 
@@ -193,31 +193,31 @@ func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadat
 		}
 	}
 
-	contentKey, ok, err := v.store.GetContentKeyByBuildKey(ctx, buildKey)
+	contentKey, ok, err := r.store.GetContentKeyByBuildKey(ctx, buildKey)
 	if err != nil {
 		return "", fmt.Errorf("looking up build key: %w", err)
 	}
 
-	if ok && contentKey != "" {
-		v.logger.Debug("image cache hit", "layer", md.Name, "contentKey", contentKey)
+	if ok && contentKey != "" && r.hasKernel(contentKey) {
+		r.logger.Debug("image cache hit", "layer", md.Name, "contentKey", contentKey)
 		return contentKey, nil
 	}
 
-	v.logger.Info("image cache miss, resolving", "layer", md.Name)
+	r.logger.Warn("image cache miss", "resolving", md.Name)
 
 	// a staging directory unique to this attempt: a fixed path would let a
 	// failed attempt's leftovers merge into the next one and be hashed into
 	// its content key, and would collide between concurrent instantiations
-	stageDir, err := os.MkdirTemp(v.bldDir, "stage-"+md.ID+"-")
+	stageDir, err := os.MkdirTemp(r.bldDir, "stage-"+md.ID+"-")
 	if err != nil {
 		return "", fmt.Errorf("creating staging directory: %w", err)
 	}
 
 	// publishing renames the directory away, so this is a no-op on the success
 	// path and a rollback on every failure below
-	defer v.removeAll(stageDir)
+	defer r.removeAll(stageDir)
 
-	if err := v.downloadImage(ctx, md, stageDir); err != nil {
+	if err := r.downloadImage(ctx, md, stageDir); err != nil {
 		return "", fmt.Errorf("fetching image for layer %q: %w", md.Name, err)
 	}
 
@@ -228,7 +228,7 @@ func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadat
 
 	// an existing directory already holds these exact bytes, so the staging
 	// copy is redundant and the deferred cleanup discards it
-	artifactDir := filepath.Join(v.imgDir, contentKey)
+	artifactDir := filepath.Join(r.imgDir, contentKey)
 	if !resolveDirectory(artifactDir) {
 		if err := os.Rename(stageDir, artifactDir); err != nil {
 			return "", fmt.Errorf("publishing image %s: %w", artifactDir, err)
@@ -238,11 +238,11 @@ func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadat
 	// the artifact is content-addressed, so a failure here leaves a directory
 	// that is valid but unindexed: the next resolution of this layer
 	// recomputes the same content key and reuses it
-	if err := v.store.SaveImageMetadata(ctx, spec, buildKey, contentKey, size); err != nil {
+	if err := r.store.SaveImageMetadata(ctx, spec, buildKey, contentKey, size); err != nil {
 		return "", fmt.Errorf("indexing image %s: %w", contentKey, err)
 	}
 
-	v.logger.Info("image published", "layer", md.Name, "contentKey", contentKey, "bytes", size)
+	r.logger.Info("image published", "layer", md.Name, "contentKey", contentKey, "bytes", size)
 
 	return contentKey, nil
 }
@@ -250,7 +250,7 @@ func (v *BuildValidator) resolveImage(ctx context.Context, md model.LayerMetadat
 // downloadImage populates stageDir with the layer's build artifacts, either by
 // pulling a published image or by cloning and building the layer's repository.
 // !!! The caller owns stageDir and is responsible for removing it !!!
-func (v *BuildValidator) downloadImage(ctx context.Context, md model.LayerMetadata, stageDir string) error {
+func (r *BuildResolver) downloadImage(ctx context.Context, md model.LayerMetadata, stageDir string) error {
 	if hasImage(md) {
 		cmd := exec.CommandContext(ctx, "kraft", "pkg", "pull", "--no-prompt", "-o", stageDir, md.Image)
 
@@ -269,11 +269,11 @@ func (v *BuildValidator) downloadImage(ctx context.Context, md model.LayerMetada
 	}
 
 	// clone dir is unique per attempt, otherwise concurrent builds of one layer would share it
-	tmpRepoDir, err := os.MkdirTemp(v.bldDir, "repo-"+md.ID+"-")
+	tmpRepoDir, err := os.MkdirTemp(r.bldDir, "repo-"+md.ID+"-")
 	if err != nil {
 		return fmt.Errorf("creating clone directory: %w", err)
 	}
-	defer v.removeAll(tmpRepoDir)
+	defer r.removeAll(tmpRepoDir)
 
 	// if prompted abort to avoid infinite wait time
 	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", md.Build.Pull, tmpRepoDir)
@@ -297,7 +297,7 @@ func (v *BuildValidator) downloadImage(ctx context.Context, md model.LayerMetada
 	}
 
 	// pack kernels (and optionally initrd) into the staging directory
-	return v.packageLayer(ctx, md.Name, workDir, stageDir, cmdFields)
+	return r.packageLayer(ctx, md.Name, workDir, stageDir, cmdFields)
 }
 
 // generateContentKey, generates contentKey which uniquely identifies cached image
@@ -367,7 +367,7 @@ func resolvePkgByPlat(pkgs []Package, plat string) *Package {
 // of building an image. Returns spec (buildParams, persisted in db for debugging), buildKey, error
 func generateBuildKeyFromOCIRef(md model.LayerMetadata, pkg Package) (string, string, error) {
 	specMap := make(map[string]string)
-	specMap["kind"], specMap["digest"], specMap["plat"], specMap["ref"] = "OCI", pkg.Manifest, pkg.Plat, md.Image
+	specMap["kind"], specMap["digest"], specMap["plat"], specMap["ref"] = "OCI", pkg.Manifest, pkg.Plat, strings.TrimSpace(md.Image)
 
 	return hashSpec(specMap)
 }
@@ -399,6 +399,9 @@ func hashSpec(specMap map[string]string) (spec string, key string, err error) {
 	return string(specBytes), hex.EncodeToString(sum[:]), nil
 }
 
+// TODO: change tokenizing strategy to handle arguments under double quotes
+// e.g. git commit -m "some word", becomes [git, commit, -m, "some, word"]
+//
 // buildFields, tokenizes build commands
 func buildFields(md model.LayerMetadata) ([]string, error) {
 	fields := strings.Fields(md.Build.Command)
@@ -409,12 +412,25 @@ func buildFields(md model.LayerMetadata) ([]string, error) {
 	return fields, nil
 }
 
-func (v *BuildValidator) removeAll(dir string) {
+func (r *BuildResolver) removeAll(dir string) {
 	if err := os.RemoveAll(dir); err != nil {
-		v.logger.Warn("removing directory", "dir", dir, "err", err)
+		r.logger.Warn("removing directory", "dir", dir, "err", err)
 	}
 }
 
 func hasImage(md model.LayerMetadata) bool {
-	return strings.Trim(md.Image, " ") != ""
+	return strings.TrimSpace(md.Image) != ""
+}
+
+func (r *BuildResolver) hasKernel(contentKey string) bool {
+	fi, err := os.Stat(filepath.Join(r.imgDir, contentKey, "unikraft", "bin", "kernel"))
+	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
+}
+
+func buildExists(md *model.LayerMetadata) bool {
+	if md.Build == nil || strings.TrimSpace(md.Build.Pull) == "" || strings.TrimSpace(md.Build.Command) == "" {
+		return false
+	}
+
+	return true
 }

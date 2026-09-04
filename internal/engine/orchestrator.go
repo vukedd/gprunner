@@ -5,26 +5,26 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/c12s/gprunner/internal/validation"
+	"github.com/c12s/gprunner/internal/resolver"
 	"github.com/c12s/gprunner/pkg/model"
 )
 
 type Orchestrator struct {
-	v      *validation.BuildValidator
+	r      *resolver.BuildResolver
 	imgDir string
 	l      *slog.Logger
 }
 
-func NewOrchestrator(v *validation.BuildValidator, l *slog.Logger, imgDir string) *Orchestrator {
-	return &Orchestrator{v: v, l: l, imgDir: imgDir}
+func NewOrchestrator(r *resolver.BuildResolver, l *slog.Logger, imgDir string) *Orchestrator {
+	return &Orchestrator{r: r, l: l, imgDir: imgDir}
 }
 
 func (o *Orchestrator) InstantiateChart(ctx context.Context, chart model.Chart) error {
 	layers := chart.ChartData
 
-	imageMap, err := o.v.ValidateLayers(ctx, layers)
+	imageMap, err := o.r.ResolveLayers(ctx, layers)
 	if err != nil {
-		return fmt.Errorf("an error has occurred while validating layers: %w", err)
+		return fmt.Errorf("an error has occurred while resolving layers: %w", err)
 	}
 
 	for _, pcd := range layers.StoredProcedures {

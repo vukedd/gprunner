@@ -1,4 +1,4 @@
-package validation
+package resolver
 
 import (
 	"archive/tar"
@@ -126,7 +126,7 @@ func extractPackage(packageArchivePath, outputDir string) error {
 }
 
 // packageLayer,
-func (v *BuildValidator) packageLayer(ctx context.Context, layerName, workDir, outputDir string, buildFields []string) error {
+func (v *BuildResolver) packageLayer(ctx context.Context, layerName, workDir, outputDir string, buildFields []string) error {
 	pkgName := filepath.Base(outputDir)
 
 	// rebuild rootfs and fetch kernels from store (downloads on cache miss)

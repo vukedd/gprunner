@@ -30,7 +30,7 @@ services:
       KRAFTKIT_NO_CHECK_UPDATES: ${KRAFTKIT_NO_CHECK_UPDATES}
     volumes:
       # image/build mount
-      - ./data:/app/data
+      - ~/data:/app/data
       # socket access with read only options
       - buildkit-sock:/run/buildkit:ro
       # kraft package store
