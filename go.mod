@@ -1,4 +1,4 @@
-module github.com/c12s/pgrunner
+module github.com/c12s/gprunner
 
 go 1.25.5
 

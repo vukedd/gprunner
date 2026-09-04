@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/c12s/pgrunner/internal/validation"
-	"github.com/c12s/pgrunner/pkg/model"
+	"github.com/c12s/gprunner/internal/validation"
+	"github.com/c12s/gprunner/pkg/model"
 )
 
 type Orchestrator struct {

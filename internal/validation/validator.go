@@ -16,13 +16,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/c12s/pgrunner/internal/persistence"
-	"github.com/c12s/pgrunner/pkg/model"
+	"github.com/c12s/gprunner/internal/persistence"
+	"github.com/c12s/gprunner/pkg/model"
 
 	"golang.org/x/sys/unix"
 )
 
-var artifacts = []string{"kernel", "kernel.dbg", "initrd"}
+var artifacts = []string{"kernel", "initrd"} //kernel.dbg
 
 type BuildValidator struct {
 	imgDir string
@@ -88,7 +88,7 @@ func (v *BuildValidator) validateLayer(ctx context.Context, fts model.Features, 
 func (v *BuildValidator) validateLinks(links model.Links, md model.LayerMetadata, datasources map[string]model.DataSource) error {
 	for _, hl := range links.HardLinks {
 		ds := datasources[hl]
-		if err := v.validateDataSource(ds); err != nil {
+		if err := v.validateDataSource(ds, true); err != nil {
 			return fmt.Errorf("hard link validation failed: %w", err)
 		}
 	}
@@ -96,7 +96,7 @@ func (v *BuildValidator) validateLinks(links model.Links, md model.LayerMetadata
 	// soft links aren't mandatory for layer start up
 	for _, sl := range links.SoftLinks {
 		ds := datasources[sl]
-		if err := v.validateDataSource(ds); err != nil {
+		if err := v.validateDataSource(ds, false); err != nil {
 			v.logger.Warn("soft link validation failed", "layer", md.Name, "dataSource", sl, "err", err)
 		}
 	}
@@ -104,11 +104,23 @@ func (v *BuildValidator) validateLinks(links model.Links, md model.LayerMetadata
 	return nil
 }
 
-func (v *BuildValidator) validateDataSource(ds model.DataSource) error {
+func (v *BuildValidator) validateDataSource(ds model.DataSource, isHardLinked bool) error {
 	switch ds.Type {
 	case model.DataSourceFileType:
 		if !resolveDirectory(ds.Path) {
 			return fmt.Errorf("data source %s on path %s: %w", ds.Name, ds.Path, ErrDataSourceMissing)
+		}
+		// R is 4, W IS 2
+		mode := uint32(unix.R_OK)
+		if isHardLinked {
+			// 0b100
+			// or
+			// 0b010
+			// 0b110 = 6 = RW
+			mode |= unix.W_OK
+		}
+		if unix.Access(ds.Path, mode) != nil {
+			return fmt.Errorf("data source %s on path %s: %w", ds.Name, ds.Path, ErrDataSourcePermission)
 		}
 	default:
 		return fmt.Errorf("data source %s of type %q: %w", ds.Name, ds.Type, ErrDataSourceType)

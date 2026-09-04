@@ -16,4 +16,6 @@ var (
 	ErrDataSourceMissing = errors.New("data source path not found")
 
 	ErrDataSourceType = errors.New("invalid data source type")
+
+	ErrDataSourcePermission = errors.New("data source path not readable/writable")
 )

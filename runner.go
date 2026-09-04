@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/c12s/pgrunner/internal/engine"
-	"github.com/c12s/pgrunner/internal/persistence"
-	"github.com/c12s/pgrunner/internal/validation"
-	"github.com/c12s/pgrunner/pkg/model"
+	"github.com/c12s/gprunner/internal/engine"
+	"github.com/c12s/gprunner/internal/persistence"
+	"github.com/c12s/gprunner/internal/validation"
+	"github.com/c12s/gprunner/pkg/model"
 )
 
 type Runner struct {
