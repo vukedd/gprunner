@@ -6,11 +6,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+const packagePrefix = "pgrunner-"
+
+// syncTree flushes every file and directory under root to disk. A write that
+// has only reached the page cache is invisible to a crash, so without this a
+// published directory can survive holding empty or half-written artifacts.
+func syncTree(root string) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// symlinks and other irregular entries hold no data of their own
+		if !d.IsDir() && !d.Type().IsRegular() {
+			return nil
+		}
+
+		return syncPath(p)
+	})
+}
+
+// syncPath fsyncs a single file or directory. On a directory this durably
+// records which names it contains, not the contents of the files behind them.
+func syncPath(p string) error {
+	f, err := os.Open(p)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", p, err)
+	}
+	defer f.Close()
+
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing %s: %w", p, err)
+	}
+
+	return nil
+}
 
 // blobPath, converts digest into blob path
 func blobPath(tmp, digest string) string {
@@ -76,13 +113,13 @@ func untar(archive, dst string) error {
 }
 
 // extractPackage,
-func extractPackage(packageArchivePath, outputDir string) error {
+func (r *BuildResolver) extractPackage(packageArchivePath, outputDir string) error {
 	// outer container untar
 	// e.g. package structure:
 	// 	- index.json, oci-layout
 	//  - blobs/sha256/manifest.json
 	//  - multiple blobs/sha256/tars (kernels and initrd)
-	tmp, err := os.MkdirTemp("", "kraft-pkg-")
+	tmp, err := os.MkdirTemp(r.bldDir, packagePrefix+"kraft-pkg-")
 	if err != nil {
 		return err
 	}
@@ -126,8 +163,11 @@ func extractPackage(packageArchivePath, outputDir string) error {
 }
 
 // packageLayer,
-func (v *BuildResolver) packageLayer(ctx context.Context, layerName, workDir, outputDir string, buildFields []string) error {
+func (r *BuildResolver) packageLayer(ctx context.Context, layerName, workDir, outputDir string, buildFields []string) error {
 	pkgName := filepath.Base(outputDir)
+
+	pkgCtx, cancel := context.WithTimeout(ctx, r.timeouts.Build)
+	defer cancel()
 
 	// rebuild rootfs and fetch kernels from store (downloads on cache miss)
 	args := []string{"pkg", "--no-prompt", "--name", pkgName}
@@ -137,28 +177,31 @@ func (v *BuildResolver) packageLayer(ctx context.Context, layerName, workDir, ou
 	}
 	args = append(args, workDir)
 
-	output, err := exec.CommandContext(ctx, "kraft", args...).CombinedOutput()
+	output, err := exec.CommandContext(pkgCtx, "kraft", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("packaging failed for layer %q: %w — %s", layerName, err, output)
 	}
 
 	defer func() {
-		out, err := exec.CommandContext(ctx, "kraft", "pkg", "remove", "--no-prompt", "-n", pkgName).CombinedOutput()
+		rmCtx, cancelRm := detached(ctx)
+		defer cancelRm()
+
+		out, err := exec.CommandContext(rmCtx, "kraft", "pkg", "remove", "--no-prompt", "-n", pkgName).CombinedOutput()
 		if err != nil {
-			v.logger.Warn("removing package from kraft store", "pkg", pkgName, "err", err, "output", out)
+			r.logger.Warn("removing package from kraft store", "pkg", pkgName, "err", err, "output", out)
 		}
 	}()
 
 	// export stored package as tar
 	archive := filepath.Join(workDir, "package.tar")
 
-	output, err = exec.CommandContext(ctx, "kraft", "pkg", "export", "--output", archive, pkgName).CombinedOutput()
+	output, err = exec.CommandContext(pkgCtx, "kraft", "pkg", "export", "--output", archive, pkgName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("package export failed for layer %q: %w — %s", layerName, err, output)
 	}
 
 	// extract package to outputDir
-	if err := extractPackage(archive, outputDir); err != nil {
+	if err := r.extractPackage(archive, outputDir); err != nil {
 		return fmt.Errorf("unpacking package for layer %q: %w", layerName, err)
 	}
 

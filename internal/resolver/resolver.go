@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/c12s/gprunner/internal/persistence"
 	"github.com/c12s/gprunner/pkg/model"
@@ -24,15 +25,27 @@ import (
 
 var artifacts = []string{"kernel", "initrd"} //kernel.dbg
 
-type BuildResolver struct {
-	imgDir string
-	bldDir string
-	store  *persistence.Store
-	logger *slog.Logger
+const detachedTimeout = 30 * time.Second
+
+type Timeouts struct {
+	Network time.Duration
+	Build   time.Duration
 }
 
-func NewBuildResolver(l *slog.Logger, imgDir, bldDir string, s *persistence.Store) *BuildResolver {
-	return &BuildResolver{logger: l, imgDir: imgDir, bldDir: bldDir, store: s}
+type BuildResolver struct {
+	imgDir   string
+	bldDir   string
+	store    *persistence.Store
+	logger   *slog.Logger
+	timeouts Timeouts
+}
+
+func NewBuildResolver(l *slog.Logger, imgDir, bldDir string, s *persistence.Store, t Timeouts) *BuildResolver {
+	return &BuildResolver{logger: l, imgDir: imgDir, bldDir: bldDir, store: s, timeouts: t}
+}
+
+func detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), detachedTimeout)
 }
 
 // general
@@ -147,7 +160,10 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 
 	var spec, buildKey string
 	if hasImage(md) {
-		infoCmd := exec.CommandContext(ctx, "kraft", "pkg", "info", "-u", "-o", "json", md.Image)
+		infoCtx, cancel := context.WithTimeout(ctx, r.timeouts.Network)
+		defer cancel()
+
+		infoCmd := exec.CommandContext(infoCtx, "kraft", "pkg", "info", "-u", "-o", "json", md.Image)
 
 		output, err := infoCmd.Output()
 		if err != nil {
@@ -182,7 +198,10 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 			return "", fmt.Errorf("layer %q: %w", md.Name, ErrNoSource)
 		}
 
-		commitSHA, err := resolveCommit(ctx, md.Build.Pull)
+		refCtx, cancel := context.WithTimeout(ctx, r.timeouts.Network)
+		defer cancel()
+
+		commitSHA, err := resolveCommit(refCtx, md.Build.Pull)
 		if err != nil {
 			return "", fmt.Errorf("resolving commit: %w", err)
 		}
@@ -208,7 +227,7 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 	// a staging directory unique to this attempt: a fixed path would let a
 	// failed attempt's leftovers merge into the next one and be hashed into
 	// its content key, and would collide between concurrent instantiations
-	stageDir, err := os.MkdirTemp(r.bldDir, "stage-"+md.ID+"-")
+	stageDir, err := os.MkdirTemp(r.bldDir, packagePrefix+"stage-"+md.ID+"-")
 	if err != nil {
 		return "", fmt.Errorf("creating staging directory: %w", err)
 	}
@@ -235,10 +254,15 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 		}
 	}
 
+	// the image artifacts are already saved, so we provide a refreshed context
+	// to allow image index to be persisted
+	saveCtx, cancelSave := detached(ctx)
+	defer cancelSave()
+
 	// the artifact is content-addressed, so a failure here leaves a directory
 	// that is valid but unindexed: the next resolution of this layer
 	// recomputes the same content key and reuses it
-	if err := r.store.SaveImageMetadata(ctx, spec, buildKey, contentKey, size); err != nil {
+	if err := r.store.SaveImageMetadata(saveCtx, spec, buildKey, contentKey, size); err != nil {
 		return "", fmt.Errorf("indexing image %s: %w", contentKey, err)
 	}
 
@@ -252,7 +276,10 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 // !!! The caller owns stageDir and is responsible for removing it !!!
 func (r *BuildResolver) downloadImage(ctx context.Context, md model.LayerMetadata, stageDir string) error {
 	if hasImage(md) {
-		cmd := exec.CommandContext(ctx, "kraft", "pkg", "pull", "--no-prompt", "-o", stageDir, md.Image)
+		pullCtx, cancel := context.WithTimeout(ctx, r.timeouts.Network)
+		defer cancel()
+
+		cmd := exec.CommandContext(pullCtx, "kraft", "pkg", "pull", "--no-prompt", "-o", stageDir, md.Image)
 
 		output, err := cmd.CombinedOutput()
 		if err != nil {
@@ -269,14 +296,17 @@ func (r *BuildResolver) downloadImage(ctx context.Context, md model.LayerMetadat
 	}
 
 	// clone dir is unique per attempt, otherwise concurrent builds of one layer would share it
-	tmpRepoDir, err := os.MkdirTemp(r.bldDir, "repo-"+md.ID+"-")
+	tmpRepoDir, err := os.MkdirTemp(r.bldDir, packagePrefix+"repo-"+md.ID+"-")
 	if err != nil {
 		return fmt.Errorf("creating clone directory: %w", err)
 	}
 	defer r.removeAll(tmpRepoDir)
 
+	cloneCtx, cancelClone := context.WithTimeout(ctx, r.timeouts.Network)
+	defer cancelClone()
+
 	// if prompted abort to avoid infinite wait time
-	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", md.Build.Pull, tmpRepoDir)
+	cloneCmd := exec.CommandContext(cloneCtx, "git", "clone", "--depth", "1", md.Build.Pull, tmpRepoDir)
 	cloneCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 
 	cloneOutput, err := cloneCmd.CombinedOutput()
@@ -290,7 +320,10 @@ func (r *BuildResolver) downloadImage(ctx context.Context, md model.LayerMetadat
 	args := append([]string{}, cmdFields[1:]...)
 	args = append(args, workDir)
 
-	buildCmd := exec.CommandContext(ctx, cmdFields[0], args...)
+	buildCtx, cancelBuild := context.WithTimeout(ctx, r.timeouts.Build)
+	defer cancelBuild()
+
+	buildCmd := exec.CommandContext(buildCtx, cmdFields[0], args...)
 	buildOutput, err := buildCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("image build failed for %q: %w — %s", md.Name, err, buildOutput)

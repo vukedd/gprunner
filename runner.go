@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/c12s/gprunner/internal/engine"
 	"github.com/c12s/gprunner/internal/persistence"
@@ -20,9 +21,16 @@ type Runner struct {
 	s   *persistence.Store
 }
 
+const (
+	DefaultNetworkTimeout = 5 * time.Minute
+	DefaultBuildTimeout   = 10 * time.Minute
+)
+
 type Config struct {
-	CacheDir string
-	Logger   *slog.Logger
+	CacheDir       string
+	Logger         *slog.Logger
+	NetworkTimeout time.Duration
+	BuildTimeout   time.Duration
 }
 
 func New(ctx context.Context, cfg Config) (*Runner, error) {
@@ -35,13 +43,22 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
+	if cfg.NetworkTimeout <= 0 {
+		cfg.NetworkTimeout = DefaultNetworkTimeout
+	}
+	if cfg.BuildTimeout <= 0 {
+		cfg.BuildTimeout = DefaultBuildTimeout
+	}
 
 	s, err := persistence.Open(ctx, filepath.Join(dirs.db, "pgrunner.db"))
 	if err != nil {
 		return nil, fmt.Errorf("pgrunner: opening store: %w", err)
 	}
 
-	r := resolver.NewBuildResolver(cfg.Logger, dirs.image, dirs.build, s)
+	r := resolver.NewBuildResolver(cfg.Logger, dirs.image, dirs.build, s, resolver.Timeouts{
+		Network: cfg.NetworkTimeout,
+		Build:   cfg.BuildTimeout,
+	})
 	o := engine.NewOrchestrator(r, cfg.Logger, dirs.image)
 
 	return &Runner{cfg: cfg, o: o, s: s}, nil
@@ -95,4 +112,9 @@ func resolveDirs(cacheDir string) (dirs, error) {
 	}
 
 	return d, nil
+}
+
+// TODO
+func reclaim() error {
+	return nil
 }
