@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,40 +13,6 @@ import (
 )
 
 const packagePrefix = "pgrunner-"
-
-// syncTree flushes every file and directory under root to disk. A write that
-// has only reached the page cache is invisible to a crash, so without this a
-// published directory can survive holding empty or half-written artifacts.
-func syncTree(root string) error {
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// symlinks and other irregular entries hold no data of their own
-		if !d.IsDir() && !d.Type().IsRegular() {
-			return nil
-		}
-
-		return syncPath(p)
-	})
-}
-
-// syncPath fsyncs a single file or directory. On a directory this durably
-// records which names it contains, not the contents of the files behind them.
-func syncPath(p string) error {
-	f, err := os.Open(p)
-	if err != nil {
-		return fmt.Errorf("opening %s: %w", p, err)
-	}
-	defer f.Close()
-
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("syncing %s: %w", p, err)
-	}
-
-	return nil
-}
 
 // blobPath, converts digest into blob path
 func blobPath(tmp, digest string) string {

@@ -114,7 +114,7 @@ func resolveDirs(cacheDir string) (dirs, error) {
 	return d, nil
 }
 
-// TODO
+// TODO: reclaim space from buildDir after service failure
 func reclaim() error {
 	return nil
 }
