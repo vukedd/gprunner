@@ -12,14 +12,13 @@ func (s *Store) GetContentKeyByBuildKey(ctx context.Context, buildKey string) (c
 	const q = `SELECT content_key FROM build_keys WHERE build_key = ?`
 
 	err = s.db.QueryRowContext(ctx, q, buildKey).Scan(&contentID)
-	switch {
-	// buildKey wasn't previously persisted
-	case errors.Is(err, sql.ErrNoRows):
-		return "", false, nil
-
-	// an error has occurred while looking up contentID
-	case err != nil:
-		return "", false, fmt.Errorf("looking up build key %s: %w", buildKey, err)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return "", false, nil
+		default:
+			return "", false, fmt.Errorf("looking up build key %s: %w", buildKey, err)
+		}
 	}
 	return contentID, true, nil
 }
@@ -62,6 +61,17 @@ func (s *Store) SaveImageMetadata(ctx context.Context, spec, buildKey, contentKe
 
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("committing image %s: %w", contentKey, err)
+	}
+
+	return nil
+}
+
+func (s *Store) TouchImage(ctx context.Context, contentKey string) (err error) {
+	const q = `UPDATE images SET last_used_at = ? WHERE content_key = ?`
+	now := time.Now().Unix()
+
+	if _, err = s.db.ExecContext(ctx, q, now, contentKey); err != nil {
+		return fmt.Errorf("touching image %s: %w", contentKey, err)
 	}
 
 	return nil

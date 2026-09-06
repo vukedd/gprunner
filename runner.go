@@ -22,8 +22,8 @@ type Runner struct {
 }
 
 const (
-	DefaultNetworkTimeout = 5 * time.Minute
-	DefaultBuildTimeout   = 10 * time.Minute
+	DefaultNetworkTimeout = 1 * time.Minute
+	DefaultBuildTimeout   = 5 * time.Minute
 
 	DefaultMaxConcurrency = 5
 )
@@ -68,7 +68,7 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 	}
 
 	mc := resolver.MaxConcurrency{
-		Run:   cfg.MaxConcurrency,
+		Run:     cfg.MaxConcurrency,
 		Resolve: cfg.MaxConcurrency,
 	}
 

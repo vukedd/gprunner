@@ -243,6 +243,12 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 
 		if ok && contentKey != "" && r.hasKernel(contentKey) {
 			r.logger.Debug("image cache hit", "layer", md.Name, "contentKey", contentKey)
+
+			// update last used at
+			if err := r.store.TouchImage(ctx, contentKey); err != nil {
+				r.logger.Warn("failed touching image", "contentKey", contentKey)
+			}
+
 			return contentKey, nil
 		}
 
@@ -273,8 +279,14 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 		// copy is redundant and the deferred cleanup discards it
 		artifactDir := filepath.Join(r.imgDir, contentKey)
 		if !resolveDirectory(artifactDir) {
+			if err := syncTree(stageDir); err != nil {
+				return "", fmt.Errorf("syncing stage dir %s: %w", stageDir, err)
+			}
 			if err := os.Rename(stageDir, artifactDir); err != nil && !errors.Is(err, unix.ENOTEMPTY) && !errors.Is(err, unix.EEXIST) {
 				return "", fmt.Errorf("publishing image %s: %w", artifactDir, err)
+			}
+			if err := syncPath(r.imgDir); err != nil {
+				return "", fmt.Errorf("syncing image dir %s: %w", r.imgDir, err)
 			}
 		}
 

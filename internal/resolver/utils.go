@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,4 +189,37 @@ func targetOf(buildFields []string) (plat string, arch string) {
 	}
 
 	return plat, arch
+}
+
+// syncTree flushes every file and directory under root to disk.
+func syncTree(root string) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// symlinks and other irregular entries hold no data of their own
+		if !d.IsDir() && !d.Type().IsRegular() {
+			return nil
+		}
+
+		return syncPath(p)
+	})
+}
+
+// syncPath fsyncs a single file or directory (when called on a directory
+// makes the directory metadata changes durable, but doesn't do the same for
+// its actual contents)
+func syncPath(p string) error {
+	f, err := os.Open(p)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", p, err)
+	}
+	defer f.Close()
+
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing %s: %w", p, err)
+	}
+
+	return nil
 }
