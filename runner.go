@@ -24,6 +24,8 @@ type Runner struct {
 const (
 	DefaultNetworkTimeout = 5 * time.Minute
 	DefaultBuildTimeout   = 10 * time.Minute
+
+	DefaultMaxConcurrency = 5
 )
 
 type Config struct {
@@ -31,18 +33,23 @@ type Config struct {
 	Logger         *slog.Logger
 	NetworkTimeout time.Duration
 	BuildTimeout   time.Duration
+	MaxConcurrency int
 }
 
 func New(ctx context.Context, cfg Config) (*Runner, error) {
 
+	// cache directory prep
 	dirs, err := resolveDirs(cfg.CacheDir)
 	if err != nil {
 		return nil, err
 	}
 
+	// logger
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
+
+	// timeout
 	if cfg.NetworkTimeout <= 0 {
 		cfg.NetworkTimeout = DefaultNetworkTimeout
 	}
@@ -50,15 +57,28 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 		cfg.BuildTimeout = DefaultBuildTimeout
 	}
 
+	t := resolver.Timeouts{
+		Network: cfg.NetworkTimeout,
+		Build:   cfg.BuildTimeout,
+	}
+
+	// concurrency
+	if cfg.MaxConcurrency <= 0 {
+		cfg.MaxConcurrency = DefaultMaxConcurrency
+	}
+
+	mc := resolver.MaxConcurrency{
+		Run:   cfg.MaxConcurrency,
+		Resolve: cfg.MaxConcurrency,
+	}
+
+	// sqlite prep
 	s, err := persistence.Open(ctx, filepath.Join(dirs.db, "pgrunner.db"))
 	if err != nil {
 		return nil, fmt.Errorf("pgrunner: opening store: %w", err)
 	}
 
-	r := resolver.NewBuildResolver(cfg.Logger, dirs.image, dirs.build, s, resolver.Timeouts{
-		Network: cfg.NetworkTimeout,
-		Build:   cfg.BuildTimeout,
-	})
+	r := resolver.NewBuildResolver(cfg.Logger, dirs.image, dirs.build, s, t, mc)
 	o := engine.NewOrchestrator(r, cfg.Logger, dirs.image)
 
 	return &Runner{cfg: cfg, o: o, s: s}, nil

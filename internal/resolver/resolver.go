@@ -15,11 +15,14 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/c12s/gprunner/internal/persistence"
 	"github.com/c12s/gprunner/pkg/model"
 
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/sys/unix"
 )
 
@@ -32,64 +35,84 @@ type Timeouts struct {
 	Build   time.Duration
 }
 
+type MaxConcurrency struct {
+	Resolve int
+	Run     int
+}
+
 type BuildResolver struct {
-	imgDir   string
-	bldDir   string
-	store    *persistence.Store
-	logger   *slog.Logger
-	timeouts Timeouts
+	imgDir      string
+	bldDir      string
+	store       *persistence.Store
+	logger      *slog.Logger
+	timeouts    Timeouts
+	concurrency MaxConcurrency
+	sf          singleflight.Group
 }
 
-func NewBuildResolver(l *slog.Logger, imgDir, bldDir string, s *persistence.Store, t Timeouts) *BuildResolver {
-	return &BuildResolver{logger: l, imgDir: imgDir, bldDir: bldDir, store: s, timeouts: t}
-}
-
-func detached(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), detachedTimeout)
+func NewBuildResolver(l *slog.Logger, imgDir, bldDir string, s *persistence.Store, t Timeouts, mc MaxConcurrency) *BuildResolver {
+	return &BuildResolver{logger: l, imgDir: imgDir, bldDir: bldDir, store: s, timeouts: t, concurrency: mc}
 }
 
 // general
 func (r *BuildResolver) ResolveLayers(ctx context.Context, layers model.ChartConfig) (map[string]string, error) {
 	procedures, triggers, events := layers.StoredProcedures, layers.EventTriggers, layers.Events
-	datasources, imageMap := layers.DataSources, make(map[string]string)
+	datasources := layers.DataSources
 
-	for _, pcd := range procedures {
-		contentKey, err := r.resolveLayer(ctx, pcd.Features, pcd.Metadata, pcd.Links, datasources)
-		if err != nil {
-			return nil, err
-		}
-
-		imageMap[pcd.Metadata.ID] = contentKey
-	}
-
-	for _, et := range triggers {
-		contentKey, err := r.resolveLayer(ctx, et.Features, et.Metadata, et.Links, datasources)
-		if err != nil {
-			return nil, err
-		}
-
-		imageMap[et.Metadata.ID] = contentKey
-	}
-
-	// event structure doesn't contain links so empty struct is passed
-	for _, e := range events {
-		contentKey, err := r.resolveLayer(ctx, e.Features, e.Metadata, model.Links{}, datasources)
-		if err != nil {
-			return nil, err
-		}
-
-		imageMap[e.Metadata.ID] = contentKey
+	imageMap, err := r.resolveAll(ctx, procedures, triggers, events, datasources)
+	if err != nil {
+		return nil, err
 	}
 
 	return imageMap, nil
 }
 
-func (v *BuildResolver) resolveLayer(ctx context.Context, fts model.Features, md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) (string, error) {
-	if err := v.resolveLinks(links, md, datasources); err != nil {
+type resolveJob struct {
+	LayerID  string
+	Features model.Features
+	Metadata model.LayerMetadata
+	Links    model.Links
+}
+
+func (r *BuildResolver) resolveAll(
+	ctx context.Context,
+	procedures map[string]model.StoredProcedure,
+	triggers map[string]model.EventTrigger,
+	events map[string]model.Event,
+	datasources map[string]model.DataSource,
+) (map[string]string, error) {
+	jobs := transformToJobs(procedures, triggers, events)
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(r.concurrency.Resolve)
+	var mu sync.Mutex
+	imageMap := make(map[string]string)
+
+	for _, job := range jobs {
+		g.Go(func() error {
+			ck, err := r.resolveLayer(gctx, job.Features, job.Metadata, job.Links, datasources)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			imageMap[job.LayerID] = ck
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	return imageMap, nil
+}
+
+func (r *BuildResolver) resolveLayer(ctx context.Context, fts model.Features, md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) (string, error) {
+	if err := r.resolveLinks(links, md, datasources); err != nil {
 		return "", err
 	}
 
-	contentKey, err := v.resolveImage(ctx, md, fts)
+	contentKey, err := r.resolveImage(ctx, md, fts)
 	if err != nil {
 		return "", err
 	}
@@ -212,63 +235,70 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 		}
 	}
 
-	contentKey, ok, err := r.store.GetContentKeyByBuildKey(ctx, buildKey)
-	if err != nil {
-		return "", fmt.Errorf("looking up build key: %w", err)
-	}
-
-	if ok && contentKey != "" && r.hasKernel(contentKey) {
-		r.logger.Debug("image cache hit", "layer", md.Name, "contentKey", contentKey)
-		return contentKey, nil
-	}
-
-	r.logger.Warn("image cache miss", "resolving", md.Name)
-
-	// a staging directory unique to this attempt: a fixed path would let a
-	// failed attempt's leftovers merge into the next one and be hashed into
-	// its content key, and would collide between concurrent instantiations
-	stageDir, err := os.MkdirTemp(r.bldDir, packagePrefix+"stage-"+md.ID+"-")
-	if err != nil {
-		return "", fmt.Errorf("creating staging directory: %w", err)
-	}
-
-	// publishing renames the directory away, so this is a no-op on the success
-	// path and a rollback on every failure below
-	defer r.removeAll(stageDir)
-
-	if err := r.downloadImage(ctx, md, stageDir); err != nil {
-		return "", fmt.Errorf("fetching image for layer %q: %w", md.Name, err)
-	}
-
-	contentKey, size, err := generateContentKey(stageDir)
-	if err != nil {
-		return "", fmt.Errorf("hashing image for layer %q: %w", md.Name, err)
-	}
-
-	// an existing directory already holds these exact bytes, so the staging
-	// copy is redundant and the deferred cleanup discards it
-	artifactDir := filepath.Join(r.imgDir, contentKey)
-	if !resolveDirectory(artifactDir) {
-		if err := os.Rename(stageDir, artifactDir); err != nil {
-			return "", fmt.Errorf("publishing image %s: %w", artifactDir, err)
+	key, err, _ := r.sf.Do(buildKey, func() (interface{}, error) {
+		contentKey, ok, err := r.store.GetContentKeyByBuildKey(ctx, buildKey)
+		if err != nil {
+			return "", fmt.Errorf("looking up build key: %w", err)
 		}
+
+		if ok && contentKey != "" && r.hasKernel(contentKey) {
+			r.logger.Debug("image cache hit", "layer", md.Name, "contentKey", contentKey)
+			return contentKey, nil
+		}
+
+		r.logger.Warn("image cache miss", "resolving", md.Name)
+
+		// a staging directory unique to this attempt: a fixed path would let a
+		// failed attempt's leftovers merge into the next one and be hashed into
+		// its content key, and would collide between concurrent instantiations
+		stageDir, err := os.MkdirTemp(r.bldDir, packagePrefix+"stage-"+md.ID+"-")
+		if err != nil {
+			return "", fmt.Errorf("creating staging directory: %w", err)
+		}
+
+		// publishing renames the directory away, so this is a no-op on the success
+		// path and a rollback on every failure below
+		defer r.removeAll(stageDir)
+
+		if err := r.downloadImage(ctx, md, stageDir); err != nil {
+			return "", fmt.Errorf("fetching image for layer %q: %w", md.Name, err)
+		}
+
+		contentKey, size, err := generateContentKey(stageDir)
+		if err != nil {
+			return "", fmt.Errorf("hashing image for layer %q: %w", md.Name, err)
+		}
+
+		// an existing directory already holds these exact bytes, so the staging
+		// copy is redundant and the deferred cleanup discards it
+		artifactDir := filepath.Join(r.imgDir, contentKey)
+		if !resolveDirectory(artifactDir) {
+			if err := os.Rename(stageDir, artifactDir); err != nil && !errors.Is(err, unix.ENOTEMPTY) && !errors.Is(err, unix.EEXIST) {
+				return "", fmt.Errorf("publishing image %s: %w", artifactDir, err)
+			}
+		}
+
+		// the image artifacts are already saved, so we provide a refreshed context
+		// to allow image index to be persisted
+		saveCtx, cancelSave := detached(ctx)
+		defer cancelSave()
+
+		// the artifact is content-addressed, so a failure here leaves a directory
+		// that is valid but unindexed: the next resolution of this layer
+		// recomputes the same content key and reuses it
+		if err := r.store.SaveImageMetadata(saveCtx, spec, buildKey, contentKey, size); err != nil {
+			return "", fmt.Errorf("indexing image %s: %w", contentKey, err)
+		}
+
+		r.logger.Info("image published", "layer", md.Name, "contentKey", contentKey, "bytes", size)
+
+		return contentKey, nil
+	})
+	if err != nil {
+		return "", err
 	}
 
-	// the image artifacts are already saved, so we provide a refreshed context
-	// to allow image index to be persisted
-	saveCtx, cancelSave := detached(ctx)
-	defer cancelSave()
-
-	// the artifact is content-addressed, so a failure here leaves a directory
-	// that is valid but unindexed: the next resolution of this layer
-	// recomputes the same content key and reuses it
-	if err := r.store.SaveImageMetadata(saveCtx, spec, buildKey, contentKey, size); err != nil {
-		return "", fmt.Errorf("indexing image %s: %w", contentKey, err)
-	}
-
-	r.logger.Info("image published", "layer", md.Name, "contentKey", contentKey, "bytes", size)
-
-	return contentKey, nil
+	return key.(string), nil
 }
 
 // downloadImage populates stageDir with the layer's build artifacts, either by
@@ -466,4 +496,29 @@ func buildExists(md *model.LayerMetadata) bool {
 	}
 
 	return true
+}
+
+func detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), detachedTimeout)
+}
+
+func transformToJobs(procedures map[string]model.StoredProcedure, triggers map[string]model.EventTrigger, events map[string]model.Event) []resolveJob {
+	jobs_size := calculateJobSize(procedures, triggers, events)
+
+	jobs := make([]resolveJob, 0, jobs_size)
+	for _, p := range procedures {
+		jobs = append(jobs, resolveJob{p.Metadata.ID, p.Features, p.Metadata, p.Links})
+	}
+	for _, et := range triggers {
+		jobs = append(jobs, resolveJob{et.Metadata.ID, et.Features, et.Metadata, et.Links})
+	}
+	for _, e := range events {
+		jobs = append(jobs, resolveJob{e.Metadata.ID, e.Features, e.Metadata, model.Links{}})
+	}
+
+	return jobs
+}
+
+func calculateJobSize(procedures map[string]model.StoredProcedure, triggers map[string]model.EventTrigger, events map[string]model.Event) int {
+	return len(procedures) + len(triggers) + len(events)
 }
