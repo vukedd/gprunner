@@ -103,7 +103,7 @@
                     "disableVirtualization": true,
                     "runDetached": true,
                     "removeOnStop": true,
-                    "memory": "16K",
+                    "memory": "16Mi",
                     "kernelArgs": "/helloworld"
                 },
                 "features": {
@@ -146,7 +146,7 @@
                     "disableVirtualization": false,
                     "runDetached": false,
                     "removeOnStop": true,
-                    "memory": "64Gi",
+                    "memory": "64Mi",
                     "kernelArgs": "event1"
                 },
                 "features": {
