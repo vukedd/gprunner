@@ -211,7 +211,7 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 			return "", fmt.Errorf("image %q on platform %s: %w", md.Image, fts.Targets[0], ErrPlatUnavailable)
 		}
 
-		spec, buildKey, err = generateBuildKeyFromOCIRef(md, *pkg)
+		spec, buildKey, err = generateBuildKeyFromOCIRef(*pkg)
 		if err != nil {
 			return "", fmt.Errorf("canonicalizing specs: %w", err)
 		}
@@ -440,9 +440,9 @@ func resolvePkgByPlat(pkgs []Package, plat string) *Package {
 
 // generateBuildKeyFromOCIRef, generates buildKey which will potentially help us avoid the costs
 // of building an image. Returns spec (buildParams, persisted in db for debugging), buildKey, error
-func generateBuildKeyFromOCIRef(md model.LayerMetadata, pkg Package) (string, string, error) {
+func generateBuildKeyFromOCIRef(pkg Package) (string, string, error) {
 	specMap := make(map[string]string)
-	specMap["kind"], specMap["digest"], specMap["plat"], specMap["ref"] = "OCI", pkg.Manifest, pkg.Plat, strings.TrimSpace(md.Image)
+	specMap["kind"], specMap["digest"] = "OCI", pkg.Manifest
 
 	return hashSpec(specMap)
 }
@@ -457,7 +457,7 @@ func generateBuildKeyFromRemoteRepo(md model.LayerMetadata, commitSHA string) (s
 
 	specMap := make(map[string]string)
 	specMap["kind"], specMap["sha"] = "GIT", commitSHA
-	specMap["workdir"], specMap["pull"] = path.Clean("/"+md.Build.Workdir), md.Build.Pull
+	specMap["workdir"] = path.Clean("/" + md.Build.Workdir)
 	specMap["command"] = strings.Join(fields, "\x00")
 
 	return hashSpec(specMap)
