@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/c12s/gprunner/internal/resolver"
 )
 
 // rootfsMount tells vfscore to extract the initrd qemu loads onto /. Handing
@@ -16,10 +18,10 @@ import (
 // CSV parser behind --kernel-arg.
 const rootfsMount = `"vfs.fstab=[ ""initrd0:/:extract:::"" ]"`
 
-func RunLayer(contentKey, memory, kernelArgs, imageDir string) error {
+func RunLayer(contentKey, memory, kernelArgs, imageDir, MQAddr string) error {
 	binDir := filepath.Join(imageDir, contentKey, "unikraft", "bin")
 
-	args := []string{"run", "--no-prompt", "--plat", "qemu", "--arch", "x86_64", "--rm"}
+	args := []string{"run", "--no-prompt", "--plat", "qemu", "--arch", "x86_64", "--network", resolver.BrokerNetworkName, "-e", "MQ_ADDR=" + MQAddr, "--rm"}
 
 	// Layers built from a Kraftfile without a rootfs have no initrd.
 	initrd := filepath.Join(binDir, "initrd")

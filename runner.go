@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -19,6 +20,7 @@ type Runner struct {
 	cfg Config
 	o   *engine.Orchestrator
 	s   *persistence.Store
+	f   *engine.Forwarder
 }
 
 const (
@@ -26,11 +28,16 @@ const (
 	DefaultBuildTimeout   = 5 * time.Minute
 
 	DefaultMaxConcurrency = 5
+
+	// determines the number of devices that can connect to the broker bridge to communicate with the broker
+	DefaultBrokerSubnet = "172.200.0.1/24"
 )
 
 type Config struct {
 	CacheDir       string
 	Logger         *slog.Logger
+	BrokerAddr     string
+	BrokerSubnet   string
 	NetworkTimeout time.Duration
 	BuildTimeout   time.Duration
 	MaxConcurrency int
@@ -79,15 +86,45 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 	}
 
 	r := resolver.NewBuildResolver(cfg.Logger, dirs.image, dirs.build, s, t, mc)
-	o := engine.NewOrchestrator(r, cfg.Logger, dirs.image)
 
-	return &Runner{cfg: cfg, o: o, s: s}, nil
+
+	// network
+	if cfg.BrokerSubnet == "" {
+		cfg.BrokerSubnet = DefaultBrokerSubnet
+	}
+
+	gateway, err := r.EnsureBrokerNetwork(ctx, cfg.BrokerSubnet)
+	if err != nil {
+		s.Close()
+		return nil, fmt.Errorf("pgrunner: broker network: %w", err)
+	}
+
+
+	_, port, err := net.SplitHostPort(cfg.BrokerAddr)
+	if err != nil {
+		s.Close()
+		return nil, fmt.Errorf("pgrunner: BrokerAddr %q: %w", cfg.BrokerAddr, err)
+	}
+
+	mqAddr := net.JoinHostPort(gateway, port)
+
+	f, err := engine.StartForwarder(cfg.Logger, mqAddr, cfg.BrokerAddr)
+	if err != nil {
+		s.Close()
+		return nil, fmt.Errorf("pgrunner: broker forwarder: %w", err)
+	}
+
+	o := engine.NewOrchestrator(r, cfg.Logger, dirs.image, mqAddr)
+
+	return &Runner{cfg: cfg, o: o, s: s, f: f}, nil
 }
 
-// Close closes the image index database, releasing its file descriptors and
-// checkpointing the write-ahead log. The Runner is unusable afterwards.
+// Close stops the broker forwarder and closes the image index database,
+// releasing its file descriptors and checkpointing the write-ahead log. The
+// Runner is unusable afterwards. Running layers are left alone; the bridge
+// outlives the process by design.
 func (r *Runner) Close() error {
-	return r.s.Close()
+	return errors.Join(r.f.Close(), r.s.Close())
 }
 
 func (r *Runner) InstantiateChart(ctx context.Context, c model.Chart) error {

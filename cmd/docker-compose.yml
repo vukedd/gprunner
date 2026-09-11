@@ -21,8 +21,12 @@ services:
     depends_on:
       buildkitd:
         condition: service_healthy
+      nats:
+        condition: service_healthy
     environment:
       PGRUNNER_CACHE: ${PGRUNNER_CACHE}
+      PGRUNNER_BROKER: ${PGRUNNER_BROKER}
+      PGRUNNER_BROKER_SUBNET: ${PGRUNNER_BROKER_SUBNET}
       KRAFTKIT_BUILDKIT_HOST: ${KRAFTKIT_BUILDKIT_HOST}
       KRAFTKIT_NO_PROMPT: ${KRAFTKIT_NO_PROMPT}
       KRAFTKIT_LOG_TYPE: ${KRAFTKIT_LOG_TYPE}
@@ -35,10 +39,30 @@ services:
       - buildkit-sock:/run/buildkit:ro
       # kraft package store
       - kraft-store:/root/.local/share/kraftkit
+    # creating the broker bridge and attaching a tap per guest are both
+    # privileged network operations; /dev/net/tun is what the tap is opened on
+    cap_add:
+      - NET_ADMIN
     devices:
       - /dev/kvm
+      - /dev/net/tun
+
+  nats:
+    image: nats:2-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "${NATS_CLIENT_PORT}:4222"
+      - "${NATS_MONITOR_PORT}:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   buildkit-sock:
   buildkit-cache:
   kraft-store:
+  nats-data:

@@ -18,4 +18,12 @@ var (
 	ErrDataSourceType = errors.New("invalid data source type")
 
 	ErrDataSourcePermission = errors.New("data source path not readable/writable")
+
+	ErrBrokerSubnetInvalid = errors.New("broker subnet is not a usable IPv4 CIDR")
+
+	ErrBrokerSubnetInUse = errors.New("broker subnet overlaps an existing network")
+
+	ErrBrokerNetworkMismatch = errors.New("broker bridge exists with a different subnet")
+
+	ErrNetworkPermission = errors.New("bridge management requires NET_ADMIN")
 )
