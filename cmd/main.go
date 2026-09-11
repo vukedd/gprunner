@@ -87,6 +87,16 @@ func run(log *slog.Logger) (err error) {
 		return fmt.Errorf("instantiate: %w", err)
 	}
 
+	if err := r.KillChart(ctx, chart); err != nil {
+
+		if ctx.Err() != nil {
+			stop()
+			log.Info("shutting down", "during", "kill")
+			return nil
+		}
+		return fmt.Errorf("kill: %w", err)
+	}
+
 	// the broker forwarder lives as long as this process does, so exiting here
 	// would leave every long-running layer dialling an address nothing answers
 	log.Info("runner ready, waiting for signal")

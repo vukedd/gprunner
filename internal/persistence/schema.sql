@@ -11,3 +11,9 @@ CREATE TABLE IF NOT EXISTS build_keys (
     spec       TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS chart_state (
+    chart_id TEXT PRIMARY KEY,
+    state INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);

@@ -44,7 +44,6 @@ type Config struct {
 }
 
 func New(ctx context.Context, cfg Config) (*Runner, error) {
-
 	// cache directory prep
 	dirs, err := resolveDirs(cfg.CacheDir)
 	if err != nil {
@@ -87,7 +86,6 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 
 	r := resolver.NewBuildResolver(cfg.Logger, dirs.image, dirs.build, s, t, mc)
 
-
 	// network
 	if cfg.BrokerSubnet == "" {
 		cfg.BrokerSubnet = DefaultBrokerSubnet
@@ -98,7 +96,6 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 		s.Close()
 		return nil, fmt.Errorf("pgrunner: broker network: %w", err)
 	}
-
 
 	_, port, err := net.SplitHostPort(cfg.BrokerAddr)
 	if err != nil {
@@ -114,7 +111,7 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 		return nil, fmt.Errorf("pgrunner: broker forwarder: %w", err)
 	}
 
-	o := engine.NewOrchestrator(r, cfg.Logger, dirs.image, mqAddr)
+	o := engine.NewOrchestrator(r, cfg.Logger, s, dirs.image, mqAddr)
 
 	return &Runner{cfg: cfg, o: o, s: s, f: f}, nil
 }
@@ -127,8 +124,12 @@ func (r *Runner) Close() error {
 	return errors.Join(r.f.Close(), r.s.Close())
 }
 
-func (r *Runner) InstantiateChart(ctx context.Context, c model.Chart) error {
-	return r.o.InstantiateChart(ctx, c)
+func (r *Runner) InstantiateChart(ctx context.Context, chart model.Chart) error {
+	return r.o.InstantiateChart(ctx, chart)
+}
+
+func (r *Runner) KillChart(ctx context.Context, chart model.Chart) error {
+	return r.o.KillChart(ctx, chart)
 }
 
 type dirs struct {
