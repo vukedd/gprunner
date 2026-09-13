@@ -27,17 +27,18 @@ func NewOrchestrator(r *resolver.BuildResolver, l *slog.Logger, store *persisten
 func (o *Orchestrator) InstantiateChart(ctx context.Context, chart model.Chart) error {
 	layers := chart.ChartData
 
-	imageMap, err := o.res.ResolveLayers(ctx, layers)
-	if err != nil {
-		return fmt.Errorf("an error has occurred while resolving layers: %w", err)
-	}
-
-	MQAddr := o.mqAddr
 	topicMap, err := buildTopicMap(chart)
 	if err != nil {
 		o.logger.Error("error occurred while resolving topic map", "chart", chart.Metadata.Name)
 		return err
 	}
+
+	imageMap, err := o.res.ResolveLayers(ctx, layers, topicMap)
+	if err != nil {
+		return fmt.Errorf("an error has occurred while resolving layers: %w", err)
+	}
+
+	MQAddr := o.mqAddr
 
 	if err := o.store.UpdateChartState(ctx, chart.Metadata.ID, persistence.ChartStarting); err != nil {
 		o.logger.Error("error occurred while updating chart state", "chart", chart.Metadata.Name, "new_state", persistence.ChartStarting.String())

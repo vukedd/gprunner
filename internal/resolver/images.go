@@ -55,11 +55,11 @@ func NewBuildResolver(l *slog.Logger, imgDir, bldDir string, s *persistence.Stor
 }
 
 // general
-func (r *BuildResolver) ResolveLayers(ctx context.Context, layers model.ChartConfig) (map[string]string, error) {
+func (r *BuildResolver) ResolveLayers(ctx context.Context, layers model.ChartConfig, topicMap map[string]string) (map[string]string, error) {
 	procedures, triggers, events := layers.StoredProcedures, layers.EventTriggers, layers.Events
 	datasources := layers.DataSources
 
-	imageMap, err := r.resolveAll(ctx, procedures, triggers, events, datasources)
+	imageMap, err := r.resolveAll(ctx, procedures, triggers, events, datasources, topicMap)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +80,7 @@ func (r *BuildResolver) resolveAll(
 	triggers map[string]model.EventTrigger,
 	events map[string]model.Event,
 	datasources map[string]model.DataSource,
+	topicMap map[string]string,
 ) (map[string]string, error) {
 	jobs := transformToJobs(procedures, triggers, events)
 
@@ -90,7 +91,7 @@ func (r *BuildResolver) resolveAll(
 
 	for _, job := range jobs {
 		g.Go(func() error {
-			ck, err := r.resolveLayer(gctx, job.Features, job.Metadata, job.Links, datasources)
+			ck, err := r.resolveLayer(gctx, job.Features, job.Metadata, job.Links, datasources, topicMap)
 			if err != nil {
 				return err
 			}
@@ -107,8 +108,15 @@ func (r *BuildResolver) resolveAll(
 	return imageMap, nil
 }
 
-func (r *BuildResolver) resolveLayer(ctx context.Context, fts model.Features, md model.LayerMetadata, links model.Links, datasources map[string]model.DataSource) (string, error) {
-	if err := r.resolveLinks(links, md, datasources); err != nil {
+func (r *BuildResolver) resolveLayer(
+	ctx context.Context,
+	fts model.Features,
+	md model.LayerMetadata,
+	links model.Links,
+	datasources map[string]model.DataSource,
+	topicMap map[string]string,
+) (string, error) {
+	if err := r.resolveLinks(links, md, datasources, topicMap); err != nil {
 		return "", err
 	}
 
@@ -139,55 +147,6 @@ func resolveVolumes(fts model.Features, md model.LayerMetadata) error {
 	}
 
 	return nil
-}
-
-// data source validation
-func (r *BuildResolver) resolveLinks(links model.Links, md model.LayerMetadata, datasources map[string]model.DataSource) error {
-	for _, hl := range links.HardLinks {
-		ds := datasources[hl]
-		if err := r.resolveDataSource(ds, true); err != nil {
-			return fmt.Errorf("hard link validation failed: %w", err)
-		}
-	}
-
-	// soft links aren't mandatory for layer start up
-	for _, sl := range links.SoftLinks {
-		ds := datasources[sl]
-		if err := r.resolveDataSource(ds, false); err != nil {
-			r.logger.Warn("soft link validation failed", "layer", md.Name, "dataSource", sl, "err", err)
-		}
-	}
-
-	return nil
-}
-
-func (r *BuildResolver) resolveDataSource(ds model.DataSource, isHardLinked bool) error {
-	switch ds.Type {
-	case model.DataSourceFileType:
-		if !resolveDirectory(ds.Path) {
-			return fmt.Errorf("data source %s on path %s: %w", ds.Name, ds.Path, ErrDataSourceMissing)
-		}
-		// R is 4, W IS 2
-		mode := uint32(unix.R_OK)
-		if isHardLinked {
-			// 0b100
-			// or
-			// 0b010
-			// 0b110 = 6 = RW
-			mode |= unix.W_OK
-		}
-		if unix.Access(ds.Path, mode) != nil {
-			return fmt.Errorf("data source %s on path %s: %w", ds.Name, ds.Path, ErrDataSourcePermission)
-		}
-	default:
-		return fmt.Errorf("data source %s of type %q: %w", ds.Name, ds.Type, ErrDataSourceType)
-	}
-
-	return nil
-}
-
-func resolveDirectory(dirPath string) bool {
-	return unix.Access(dirPath, unix.F_OK) == nil
 }
 
 // Package, image metadata representation

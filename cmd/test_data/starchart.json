@@ -28,6 +28,36 @@
                 "path": "test_data/data_3.csv",
                 "resourceName": "Data 3",
                 "description": "This data source contains some data."
+            },
+            "Data Source 4": {
+                "labels": {},
+                "tags": {},
+                "id": "a0715e59-49c3-4323-bf34-fbb4ccb7e124",
+                "name": "Data Source 4",
+                "type": "file",
+                "path": "test_data",
+                "resourceName": "Data 4",
+                "description": "version bump"
+            },
+            "Data Source 5": {
+                "labels": {},
+                "tags": {},
+                "id": "a0715e59-49c3-4323-bf34-fbb4ccb7e124",
+                "name": "Data Source 5",
+                "type": "file",
+                "path": "test_data",
+                "resourceName": "Data 4",
+                "description": "version bump"
+            },
+            "Data Source 6": {
+                "labels": {},
+                "tags": {},
+                "id": "a0715e59-49c3-4323-bf34-fbb4ccb7e124",
+                "name": "Data Source 6",
+                "type": "file",
+                "path": "test_data",
+                "resourceName": "Data 4",
+                "description": "version bump"
             }
         },
         "storedProcedures": {
@@ -112,7 +142,8 @@
                         "network4:172.102.0.2"
                     ],
                     "ports": [],
-                    "volumes": [],
+                    "volumes": [
+                    ],
                     "targets": [
                         "qemu/x86_64"
                     ],
@@ -124,7 +155,8 @@
                     ],
                     "hardLinks": [],
                     "eventLinks": [
-                        "Event 3"
+                        "Event 3",
+                        "kablow"
                     ]
                 }
             }
