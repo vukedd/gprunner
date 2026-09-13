@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-const packagePrefix = "pgrunner-"
+const packagePrefix = "gp-"
 
 // blobPath, converts digest into blob path
 func blobPath(tmp, digest string) string {

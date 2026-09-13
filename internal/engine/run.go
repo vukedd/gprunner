@@ -12,12 +12,10 @@ import (
 )
 
 const (
-	// rootfsMount tells vfscore to extract the initrd qemu loads onto /. Handing
-	// kraft a kernel file rather than a project or a package gets the initrd as far
-	// as qemu's -initrd and no further: kraft emits this argument itself only for
-	// the latter two, and without it the guest boots with an empty root and cannot
-	// find the binary to execute. The doubled quotes escape the inner ones for the
-	// CSV parser behind --kernel-arg.
+	// rootfsMount tells vfscore to extract the initrd onto /. kraft adds this
+	// itself when run from a project or package, but not for a bare kernel file,
+	// where the guest would otherwise boot with an empty root. Doubled quotes
+	// escape the inner ones for the CSV parser behind --kernel-arg.
 	rootfsMount = `"vfs.fstab=[ ""initrd0:/:extract:::"" ]"`
 
 	// dataSourceMountRoot is where linked data sources appear inside the guest,

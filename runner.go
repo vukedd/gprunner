@@ -103,6 +103,12 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 		return nil, fmt.Errorf("pgrunner: BrokerAddr %q: %w", cfg.BrokerAddr, err)
 	}
 
+	// fail fast on an unreachable broker instead of at the first guest connect
+	if err := probeBrokerNetwork(cfg); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("pgrunner: BrokerAddr %q unreachable: %w", cfg.BrokerAddr, err)
+	}
+
 	mqAddr := net.JoinHostPort(gateway, port)
 
 	f, err := engine.StartForwarder(cfg.Logger, mqAddr, cfg.BrokerAddr)
@@ -130,6 +136,15 @@ func (r *Runner) InstantiateChart(ctx context.Context, chart model.Chart) error 
 
 func (r *Runner) KillChart(ctx context.Context, chart model.Chart) error {
 	return r.o.KillChart(ctx, chart)
+}
+
+func probeBrokerNetwork(cfg Config) error {
+	probe, err := net.DialTimeout("tcp", cfg.BrokerAddr, cfg.NetworkTimeout)
+	if err != nil {
+		return err
+	}
+
+	return probe.Close()
 }
 
 type dirs struct {
