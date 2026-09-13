@@ -128,7 +128,15 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 
 	o := engine.NewOrchestrator(r, cfg.Logger, s, dirs.image, mqAddr)
 
-	return &Runner{cfg: cfg, o: o, s: s, f: f}, nil
+	// a previous run may have died mid-operation, so every chart is set to
+	// stopped before any caller can start new ones.
+	rn := &Runner{cfg: cfg, o: o, s: s, f: f}
+	if err := o.Reconcile(ctx); err != nil {
+		rn.Close()
+		return nil, fmt.Errorf("gprunner: %w", err)
+	}
+
+	return rn, nil
 }
 
 func probeBrokerNetwork(cfg Config) error {

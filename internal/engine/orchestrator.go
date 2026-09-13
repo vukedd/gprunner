@@ -55,7 +55,7 @@ func (o *Orchestrator) InstantiateChart(ctx context.Context, chart model.Chart) 
 		if err := ctx.Err(); err != nil {
 			return o.abortStart(ctx, chart, err)
 		}
-		layerName := layerPrefix + "-" + chart.Metadata.ID + "-" + pcd.Metadata.ID
+		layerName := machineName(chart.Metadata.ID, pcd.Metadata.ID)
 
 		if err := RunLayer(imageMap[pcd.Metadata.ID], o.imgDir, "", layerName, pcd.Control, pcd.Features, pcd.Links, layers.DataSources, nil); err != nil {
 			return o.abortStart(ctx, chart, fmt.Errorf("an error has occurred while running layer %q: %w", pcd.Metadata.Name, err))
@@ -70,7 +70,7 @@ func (o *Orchestrator) InstantiateChart(ctx context.Context, chart model.Chart) 
 		if err != nil {
 			return o.abortStart(ctx, chart, fmt.Errorf("layer %q: %w", et.Metadata.Name, err))
 		}
-		layerName := layerPrefix + "-" + chart.Metadata.ID + "-" + et.Metadata.ID
+		layerName := machineName(chart.Metadata.ID, et.Metadata.ID)
 		if err := RunLayer(imageMap[et.Metadata.ID], o.imgDir, MQAddr, layerName, et.Control, et.Features, et.Links, layers.DataSources, topics); err != nil {
 			return o.abortStart(ctx, chart, fmt.Errorf("an error has occurred while running layer %q: %w", et.Metadata.Name, err))
 		}
@@ -80,7 +80,7 @@ func (o *Orchestrator) InstantiateChart(ctx context.Context, chart model.Chart) 
 		if err := ctx.Err(); err != nil {
 			return o.abortStart(ctx, chart, err)
 		}
-		layerName := layerPrefix + "-" + chart.Metadata.ID + "-" + e.Metadata.ID
+		layerName := machineName(chart.Metadata.ID, e.Metadata.ID)
 		topics := []string{topicMap[e.Metadata.Name]}
 		if err := RunLayer(imageMap[e.Metadata.ID], o.imgDir, MQAddr, layerName, e.Control, e.Features, model.Links{}, layers.DataSources, topics); err != nil {
 			return o.abortStart(ctx, chart, fmt.Errorf("an error has occurred while running layer %q: %w", e.Metadata.Name, err))

@@ -14,7 +14,16 @@ const (
 	machineCmdTimeout = 30 * time.Second
 	machineRunning    = "running"
 	machineExited     = "exited"
+	nameSep = "_"
 )
+
+func machineName(chartID, layerID string) string {
+	return layerPrefix + nameSep + chartID + nameSep + layerID
+}
+
+func chartPrefix(chartID string) string {
+	return layerPrefix + nameSep + chartID + nameSep
+}
 
 // machine is the slice of 'kraft ps -o json' the runner cares about.
 type machine struct {
@@ -50,7 +59,7 @@ func chartMachines(ctx context.Context, chartID string) ([]machine, error) {
 		return nil, err
 	}
 
-	prefix := layerPrefix + "-" + chartID + "-"
+	prefix := chartPrefix(chartID)
 	var own []machine
 	for _, m := range all {
 		if strings.HasPrefix(m.Name, prefix) {
