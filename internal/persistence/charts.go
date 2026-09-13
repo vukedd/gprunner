@@ -3,9 +3,12 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/c12s/gprunner/pkg/model"
 )
 
 // ChartState is the goal the runner is converging a chart towards. The values
@@ -97,4 +100,46 @@ func (s *Store) DeleteChartState(ctx context.Context, chartID string) error {
 	}
 
 	return nil
+}
+
+func (s *Store) SaveChart(ctx context.Context, chart model.Chart) error {
+	spec, err := json.Marshal(chart)
+	if err != nil {
+		return fmt.Errorf("encoding chart %s: %w", chart.Metadata.ID, err)
+	}
+
+	const q = `
+		INSERT INTO charts (chart_id, name, namespace, maintainer, schema_version, spec, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chart_id) DO UPDATE SET
+			name = excluded.name, namespace = excluded.namespace, maintainer = excluded.maintainer,
+			schema_version = excluded.schema_version, spec = excluded.spec, updated_at = excluded.updated_at`
+
+	m := chart.Metadata
+	if _, err := s.db.ExecContext(ctx, q, m.ID, m.Name, m.Namespace, m.Maintainer, chart.SchemaVersion, string(spec), time.Now().Unix()); err != nil {
+		return fmt.Errorf("saving chart %s: %w", m.ID, err)
+	}
+
+	return nil
+}
+
+func (s *Store) GetChartByRef(ctx context.Context, ref model.ChartRef) (chart model.Chart, ok bool, err error) {
+	const q = `
+		SELECT spec FROM charts
+		WHERE name = ? AND namespace = ? AND maintainer = ? AND schema_version = ?`
+
+	var spec string
+	err = s.db.QueryRowContext(ctx, q, ref.Name, ref.Namespace, ref.Maintainer, ref.SchemaVersion).Scan(&spec)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.Chart{}, false, nil
+		}
+		return model.Chart{}, false, fmt.Errorf("looking up chart %s/%s: %w", ref.Namespace, ref.Name, err)
+	}
+
+	if err := json.Unmarshal([]byte(spec), &chart); err != nil {
+		return model.Chart{}, false, fmt.Errorf("decoding chart %s/%s: %w", ref.Namespace, ref.Name, err)
+	}
+
+	return chart, true, nil
 }

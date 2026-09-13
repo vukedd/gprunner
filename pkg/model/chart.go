@@ -6,6 +6,13 @@ const (
 	DataSourceFileType DataSourceType = "file"
 )
 
+type ChartRef struct {
+	Name          string
+	Namespace     string
+	Maintainer    string
+	SchemaVersion string
+}
+
 type Chart struct {
 	APIVersion    string      `json:"apiVersion"`
 	SchemaVersion string      `json:"schemaVersion"`

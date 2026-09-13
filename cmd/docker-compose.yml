@@ -18,20 +18,25 @@ services:
     build:
       context: ..
       dockerfile: cmd/Dockerfile
+    ports:
+      - "${GPRUNNER_PORT}:${GPRUNNER_PORT}"
     depends_on:
       buildkitd:
         condition: service_healthy
       nats:
         condition: service_healthy
     environment:
-      PGRUNNER_CACHE: ${PGRUNNER_CACHE}
-      PGRUNNER_BROKER: ${PGRUNNER_BROKER}
-      PGRUNNER_BROKER_SUBNET: ${PGRUNNER_BROKER_SUBNET}
+      GPRUNNER_CACHE: ${GPRUNNER_CACHE}
+      # host part from .env, port shared with the nats service below
+      GPRUNNER_BROKER: ${GPRUNNER_BROKER}:${NATS_CLIENT_PORT}
+      GPRUNNER_BROKER_SUBNET: ${GPRUNNER_BROKER_SUBNET}
       KRAFTKIT_BUILDKIT_HOST: ${KRAFTKIT_BUILDKIT_HOST}
       KRAFTKIT_NO_PROMPT: ${KRAFTKIT_NO_PROMPT}
       KRAFTKIT_LOG_TYPE: ${KRAFTKIT_LOG_TYPE}
       KRAFTKIT_NO_COLOR: ${KRAFTKIT_NO_COLOR}
       KRAFTKIT_NO_CHECK_UPDATES: ${KRAFTKIT_NO_CHECK_UPDATES}
+      STARMAP_ADDR: ${STARMAP_ADDR}
+      GPRUNNER_PORT: ${GPRUNNER_PORT}
     volumes:
       # image/build mount
       - ~/data:/app/data
@@ -39,6 +44,9 @@ services:
       - buildkit-sock:/run/buildkit:ro
       # kraft package store
       - kraft-store:/root/.local/share/kraftkit
+    networks:
+      - default
+      - starmap-net
     # creating the broker bridge and attaching a tap per guest are both
     # privileged network operations; /dev/net/tun is what the tap is opened on
     cap_add:
@@ -49,14 +57,16 @@ services:
 
   nats:
     image: nats:2-alpine
-    command: ["-js", "-sd", "/data", "-m", "8222"]
+    # -p makes NATS listen on the configured port inside the container too,
+    # so one variable drives the listener, the host mapping and GPRUNNER_BROKER
+    command: ["-js", "-sd", "/data", "-p", "${NATS_CLIENT_PORT}", "-m", "${NATS_MONITOR_PORT}"]
     ports:
-      - "${NATS_CLIENT_PORT}:4222"
-      - "${NATS_MONITOR_PORT}:8222"
+      - "${NATS_CLIENT_PORT}:${NATS_CLIENT_PORT}"
+      - "${NATS_MONITOR_PORT}:${NATS_MONITOR_PORT}"
     volumes:
       - nats-data:/data
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${NATS_MONITOR_PORT}/healthz"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -66,3 +76,7 @@ volumes:
   buildkit-cache:
   kraft-store:
   nats-data:
+
+networks:
+  starmap-net:
+    external: true

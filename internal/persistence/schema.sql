@@ -17,3 +17,13 @@ CREATE TABLE IF NOT EXISTS chart_state (
     state INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS charts (
+    chart_id       TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    namespace      TEXT NOT NULL,
+    maintainer     TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    spec           TEXT NOT NULL,
+    updated_at     INTEGER NOT NULL
+);

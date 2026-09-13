@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+option go_package = "github.com/c12s/gprunner/cmd/api";
+package proto;
+
+service RunnerService {
+  rpc Pull(ChartRef) returns (Empty) {}
+  rpc Instantiate(InstantiateReq) returns (Empty) {}
+  rpc Kill(ChartRef) returns (Empty) {}
+}
+
+message ChartRef {
+  string name = 1;
+  string namespace = 2;
+  string maintainer = 3;
+  string schemaVersion = 4;
+}
+
+message InstantiateReq {
+  ChartRef ref = 1;
+  bool pull = 2;
+}
+
+message Empty {}

@@ -1,6 +1,7 @@
 {
     "apiVersion": "v1.0.1",
-    "schemaVersion": "v1.0.1",
+    "schemaVersion": "v1.0.7",
+    "kind": "StarChart",
     "metadata": {
         "labels": {
             "key": "value"
@@ -8,9 +9,9 @@
         "tags": {
             "key": "value"
         },
-        "id": "a0715e59-49c3-4323-bf34-fbb4ccb7e8r2",
-        "name": "My chart4",
-        "namespace": "namespace3",
+        "id": "a0715e59-49c3-4323-bf34-fbb4ccb7e8t2",
+        "name": "My chart6",
+        "namespace": "namespace5",
         "maintainer": "Milant",
         "description": "My test chart.",
         "visibility": "public",
@@ -38,8 +39,12 @@
                     },
                     "id": "017ba17b-cc52-4f10-b452-68483bc70123",
                     "name": "Stored Procedure 3",
-                    "image": "unikraft.org/helloworld:latest",
-                    "build": {},
+                    "image": "",
+                    "build": {
+                        "workdir": "examples/helloworld-rust1.75",
+                        "pull": "https://github.com/unikraft/catalog",
+                        "command": "kraft build --plat qemu --arch x86_64"
+                    },                    
                     "prefix": "DEBUG",
                     "topic": "",
                     "description": "Stored Procedure 3"
@@ -49,7 +54,7 @@
                     "runDetached": false,
                     "removeOnStop": false,
                     "memory": "32Mi",
-                    "kernelArgs": "run process data_1.csv"
+                    "kernelArgs": "/helloworld"
                 },
                 "features": {
                     "networks": [
@@ -60,7 +65,6 @@
                         "8000:8000"
                     ],
                     "volumes": [
-                        "./path/to/dir:./path"
                     ],
                     "targets": [
                         "qemu/x86_64"
@@ -89,22 +93,18 @@
                     },
                     "id": "1f9f4dff-8f6a-44a2-98a6-256ab48b6123",
                     "name": "Event Trigger 3",
-                    "image": "",
-                    "build": {
-                        "workdir": "examples/helloworld-rust1.75",
-                        "pull": "https://github.com/unikraft/catalog",
-                        "command": "kraft build --plat qemu --arch x86_64"
-                    },
+                    "image": "unikraft.org/nginx:1.25",
+                    "build": {},
                     "prefix": "DEBUG",
                     "topic": "",
                     "description": "Event Trigger 3"
                 },
                 "control": {
-                    "disableVirtualization": true,
+                    "disableVirtualization": false,
                     "runDetached": true,
                     "removeOnStop": true,
-                    "memory": "16Mi",
-                    "kernelArgs": "/helloworld"
+                    "memory": "64Mi",
+                    "kernelArgs": "/usr/bin/nginx"
                 },
                 "features": {
                     "networks": [
@@ -136,18 +136,18 @@
                     "tags": {},
                     "id": "1eb31243-5f06-4e4b-ab69-0ff69e0f6123",
                     "name": "Event 3",
-                    "image": "unikraft.org/helloworld:latest",
-                    "build": null,
+                    "image": "unikraft.org/nginx:1.25",
+                    "build": {},
                     "prefix": "DEBUG",
                     "topic": "Insert",
                     "description": "Event 3"
                 },
                 "control": {
                     "disableVirtualization": false,
-                    "runDetached": false,
+                    "runDetached": true,
                     "removeOnStop": true,
                     "memory": "64Mi",
-                    "kernelArgs": "event1"
+                    "kernelArgs": "/usr/bin/nginx"
                 },
                 "features": {
                     "networks": [],

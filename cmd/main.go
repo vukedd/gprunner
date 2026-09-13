@@ -2,21 +2,30 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	pgrunner "github.com/c12s/gprunner"
-	"github.com/c12s/gprunner/pkg/model"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+
+	"github.com/c12s/gprunner"
+	"github.com/c12s/gprunner/cmd/api"
+	"github.com/c12s/gprunner/cmd/server"
+	"github.com/c12s/gprunner/cmd/starmap"
 )
 
-// A wedged connection teardown must not hold the process open forever.
-const shutdownTimeout = 30 * time.Second
+const (
+	// A wedged connection teardown must not hold the process open forever.
+	shutdownTimeout = 30 * time.Second
+
+	defaultPort = "50052"
+)
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -28,40 +37,36 @@ func main() {
 }
 
 func run(log *slog.Logger) (err error) {
-	// signals are wired up before any long-running work: resolving layers can
-	// take minutes, and until this ctx exists a Ctrl-C there kills the process
-	// mid-build instead of unwinding it
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	f, err := os.Open("test_data/starchart.json")
-	if err != nil {
-		return fmt.Errorf("open chart: %w", err)
-	}
-	defer f.Close()
-
-	var chart model.Chart
-	if err := json.NewDecoder(f).Decode(&chart); err != nil {
-		return fmt.Errorf("decode chart: %w", err)
-	}
-
-	cache := os.Getenv("PGRUNNER_CACHE")
+	cache := os.Getenv("GPRUNNER_CACHE")
 	if cache == "" {
-		cache = "/tmp/pgrunner-cache"
+		cache = "/tmp/gprunner-cache"
 	}
 	if err := os.MkdirAll(cache, 0o755); err != nil { // CacheDir must exist
 		return fmt.Errorf("cache dir: %w", err)
 	}
 
-	brokerAddr := os.Getenv("PGRUNNER_BROKER")
+	brokerAddr := os.Getenv("GPRUNNER_BROKER")
 	if brokerAddr == "" {
 		brokerAddr = "nats:4222"
 	}
 
-	// left empty, the library falls back to pgrunner.DefaultBrokerSubnet
-	brokerSubnet := os.Getenv("PGRUNNER_BROKER_SUBNET")
+	// left empty, the library falls back to GPRUNNER.DefaultBrokerSubnet
+	brokerSubnet := os.Getenv("GPRUNNER_BROKER_SUBNET")
 
-	r, err := pgrunner.New(ctx, pgrunner.Config{
+	starmapAddr := os.Getenv("STARMAP_ADDR")
+	if starmapAddr == "" {
+		return errors.New("STARMAP_ADDR is required")
+	}
+
+	port := os.Getenv("GPRUNNER_PORT")
+	if port == "" {
+		port = defaultPort
+	}
+
+	r, err := gprunner.New(ctx, gprunner.Config{
 		CacheDir:     cache,
 		Logger:       log,
 		BrokerSubnet: brokerSubnet,
@@ -71,41 +76,60 @@ func run(log *slog.Logger) (err error) {
 		return fmt.Errorf("new runner: %w", err)
 	}
 
-	// every path out of here past this point closes the runner, so a failed
-	// instantiation still checkpoints the write-ahead log
+	// every path out of here closes the runner, so a failed start still
+	// checkpoints the write-ahead log. Deferred first so it runs last: the
+	// gRPC server must be stopped before the runner it calls into goes away
 	defer func() {
 		err = errors.Join(err, closeWithin(r, shutdownTimeout))
 	}()
 
-	if err := r.InstantiateChart(ctx, chart); err != nil {
+	sm, err := starmap.Dial(starmapAddr)
+	if err != nil {
+		return err
+	}
+	defer sm.Close()
 
-		if ctx.Err() != nil {
-			stop()
-			log.Info("shutting down", "during", "instantiate")
-			return nil
-		}
-		return fmt.Errorf("instantiate: %w", err)
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		return fmt.Errorf("listen on :%s: %w", port, err)
 	}
 
-	if err := r.KillChart(ctx, chart); err != nil {
+	grpcServer := grpc.NewServer()
+	api.RegisterRunnerServiceServer(grpcServer, server.New(r, sm, log))
+	reflection.Register(grpcServer)
 
-		if ctx.Err() != nil {
-			stop()
-			log.Info("shutting down", "during", "kill")
-			return nil
-		}
-		return fmt.Errorf("kill: %w", err)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- grpcServer.Serve(ln) }()
+
+	log.Info("runner listening", "port", port, "starmap", starmapAddr, "broker", brokerAddr)
+
+	// the broker forwarder lives as long as this process does, so the service
+	// stays up until told otherwise; every long-running layer depends on it
+	select {
+	case err := <-serveErr:
+		return fmt.Errorf("grpc server: %w", err)
+	case <-ctx.Done():
 	}
-
-	// the broker forwarder lives as long as this process does, so exiting here
-	// would leave every long-running layer dialling an address nothing answers
-	log.Info("runner ready, waiting for signal")
-	<-ctx.Done()
 
 	// hand the signals back to the runtime: a second Ctrl-C during shutdown
 	// should kill the process rather than be swallowed
 	stop()
 	log.Info("shutting down")
+
+	// stop taking new calls and let in-flight ones (a chart mid-boot) finish;
+	// a call that will not finish in time is cut off rather than holding the
+	// process open
+	stopped := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(shutdownTimeout):
+		log.Warn("grpc calls still in flight, forcing stop")
+		grpcServer.Stop()
+	}
 
 	return nil
 }
@@ -113,7 +137,7 @@ func run(log *slog.Logger) (err error) {
 // closeWithin bounds Runner.Close. Close tears down the connections the
 // forwarder is relaying, and a peer that never lets go of one is not a reason
 // to hang exit.
-func closeWithin(r *pgrunner.Runner, d time.Duration) error {
+func closeWithin(r *gprunner.Runner, d time.Duration) error {
 	done := make(chan error, 1)
 	go func() { done <- r.Close() }()
 
