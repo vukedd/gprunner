@@ -27,6 +27,10 @@ func NewOrchestrator(r *resolver.BuildResolver, l *slog.Logger, store *persisten
 func (o *Orchestrator) InstantiateChart(ctx context.Context, chart model.Chart) error {
 	layers := chart.ChartData
 
+	if err := o.clearStaleMachines(ctx, chart); err != nil {
+		return err
+	}
+
 	topicMap, err := buildTopicMap(chart)
 	if err != nil {
 		o.logger.Error("error occurred while resolving topic map", "chart", chart.Metadata.Name)
@@ -109,6 +113,31 @@ func (o *Orchestrator) KillChart(ctx context.Context, chart model.Chart) error {
 	return nil
 }
 
+func (o *Orchestrator) clearStaleMachines(ctx context.Context, chart model.Chart) error {
+	machines, err := chartMachines(ctx, chart.Metadata.ID)
+	if err != nil {
+		return err
+	}
+
+	for _, m := range machines {
+		if m.Status == machineRunning {
+			return fmt.Errorf("chart %q: %w", chart.Metadata.Name, ErrChartRunning)
+		}
+	}
+
+	for _, m := range machines {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := removeMachine(ctx, m.Name); err != nil {
+			return err
+		}
+		o.logger.Debug("stale layer removed", "machine", m.Name, "was", m.Status)
+	}
+
+	return nil
+}
+
 func (o *Orchestrator) teardownChart(ctx context.Context, chartID string) error {
 	machines, err := chartMachines(ctx, chartID)
 	if err != nil {
@@ -127,7 +156,6 @@ func (o *Orchestrator) teardownChart(ctx context.Context, chartID string) error 
 
 	return nil
 }
-
 
 func (o *Orchestrator) abortStart(ctx context.Context, chart model.Chart, cause error) error {
 	// the caller's ctx may be what failed, so the teardown gets its own

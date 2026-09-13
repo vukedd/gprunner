@@ -10,7 +10,11 @@ import (
 	"time"
 )
 
-const machineCmdTimeout = 30 * time.Second
+const (
+	machineCmdTimeout = 30 * time.Second
+	machineRunning    = "running"
+	machineExited     = "exited"
+)
 
 // machine is the slice of 'kraft ps -o json' the runner cares about.
 type machine struct {

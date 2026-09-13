@@ -10,4 +10,6 @@ var (
 	ErrEventUnknown = errors.New("event link names an event the chart does not declare")
 
 	ErrEventTopicEmpty = errors.New("event declares no topic")
+
+	ErrChartRunning = errors.New("chart already has running layers")
 )

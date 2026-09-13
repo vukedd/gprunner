@@ -33,6 +33,15 @@ const (
 	DefaultBrokerSubnet = "172.200.0.1/24"
 )
 
+var (
+	// ErrChartNotPulled is returned when a chart is referenced before SaveChart.
+	ErrChartNotPulled = errors.New("gprunner: chart has not been pulled")
+
+	// ErrChartRunning is returned by InstantiateChart when the chart already has
+	// running layers; a chart is instantiated once at a time.
+	ErrChartRunning = engine.ErrChartRunning
+)
+
 type Config struct {
 	CacheDir       string
 	Logger         *slog.Logger
@@ -178,9 +187,6 @@ func resolveDirs(cacheDir string) (dirs, error) {
 func (r *Runner) Close() error {
 	return errors.Join(r.f.Close(), r.s.Close())
 }
-
-// ErrChartNotPulled is returned when a chart is referenced before SaveChart.
-var ErrChartNotPulled = errors.New("gprunner: chart has not been pulled")
 
 // SaveChart stores a chart body so it can later be started or stopped by
 // reference. Saving the same chart again replaces the earlier copy.

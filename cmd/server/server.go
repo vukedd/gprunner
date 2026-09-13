@@ -120,6 +120,8 @@ func toStatus(err error) error {
 	switch {
 	case errors.Is(err, gprunner.ErrChartNotPulled):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, gprunner.ErrChartRunning):
+		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, context.Canceled):
 		return status.Error(codes.Canceled, err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
