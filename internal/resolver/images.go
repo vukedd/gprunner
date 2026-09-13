@@ -112,12 +112,33 @@ func (r *BuildResolver) resolveLayer(ctx context.Context, fts model.Features, md
 		return "", err
 	}
 
+	if err := resolveVolumes(fts, md); err != nil {
+		return "", err
+	}
+
 	contentKey, err := r.resolveImage(ctx, md, fts)
 	if err != nil {
 		return "", err
 	}
 
 	return contentKey, nil
+}
+
+func resolveVolumes(fts model.Features, md model.LayerMetadata) error {
+	for _, v := range fts.Volumes {
+		host, guest, ok := strings.Cut(v, ":")
+		if !ok || host == "" || guest == "" {
+			return fmt.Errorf("layer %q volume %q: %w", md.Name, v, ErrVolumeMalformed)
+		}
+		if !path.IsAbs(guest) {
+			return fmt.Errorf("layer %q volume %q: %w", md.Name, v, ErrVolumeGuestPath)
+		}
+		if !resolveDirectory(host) {
+			return fmt.Errorf("layer %q volume %q: %w", md.Name, v, ErrVolumeHostMissing)
+		}
+	}
+
+	return nil
 }
 
 // data source validation

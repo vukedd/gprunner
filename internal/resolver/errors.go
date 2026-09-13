@@ -17,6 +17,12 @@ var (
 
 	ErrDataSourceType = errors.New("invalid data source type")
 
+	ErrVolumeMalformed = errors.New("volume is not of the form host:guest")
+
+	ErrVolumeGuestPath = errors.New("volume guest mount point is not absolute")
+
+	ErrVolumeHostMissing = errors.New("volume host path not found")
+
 	ErrDataSourcePermission = errors.New("data source path not readable/writable")
 
 	ErrBrokerSubnetInvalid = errors.New("broker subnet is not a usable IPv4 CIDR")
