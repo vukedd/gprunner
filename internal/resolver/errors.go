@@ -32,6 +32,6 @@ var (
 	ErrBrokerNetworkMismatch = errors.New("broker bridge exists with a different subnet")
 
 	ErrNetworkPermission = errors.New("bridge management requires NET_ADMIN")
-	
+
 	ErrEventUnknown = errors.New("event link validation failed")
 )

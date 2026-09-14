@@ -8,7 +8,6 @@ import (
 	"github.com/c12s/gprunner/internal/persistence"
 )
 
-
 func (o *Orchestrator) Reconcile(ctx context.Context) error {
 	states, err := o.store.ListChartStates(ctx)
 	if err != nil {

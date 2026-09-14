@@ -30,7 +30,7 @@ const (
 	DefaultMaxConcurrency = 5
 
 	// determines the number of devices that can connect to the broker bridge to communicate with the broker
-	DefaultBrokerSubnet = "172.200.0.1/24"
+	DefaultBrokerSubnet = "172.200.0.1/16"
 )
 
 var (
@@ -94,6 +94,14 @@ func New(ctx context.Context, cfg Config) (*Runner, error) {
 	}
 
 	r := resolver.NewBuildResolver(cfg.Logger, dirs.image, dirs.build, s, t, mc)
+
+	// a resolve that died with the previous process leaves clones, staging
+	// directories and kraft packages behind; nothing can be resolving yet, so
+	// this is the one moment they can be swept safely
+	if err := r.Reclaim(ctx); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("gprunner: %w", err)
+	}
 
 	// network
 	if cfg.BrokerSubnet == "" {
@@ -227,9 +235,4 @@ func (r *Runner) loadChart(ctx context.Context, ref model.ChartRef) (model.Chart
 		return model.Chart{}, fmt.Errorf("%w: %s/%s@%s", ErrChartNotPulled, ref.Namespace, ref.Name, ref.SchemaVersion)
 	}
 	return chart, nil
-}
-
-// TODO: reclaim space from buildDir after service failure
-func reclaim() error {
-	return nil
 }

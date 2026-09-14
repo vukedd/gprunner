@@ -14,7 +14,7 @@ const (
 	machineCmdTimeout = 30 * time.Second
 	machineRunning    = "running"
 	machineExited     = "exited"
-	nameSep = "_"
+	nameSep           = "_"
 )
 
 func machineName(chartID, layerID string) string {
