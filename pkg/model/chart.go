@@ -67,6 +67,10 @@ type LayerMetadata struct {
 	Prefix      string            `json:"prefix"`
 	Topic       string            `json:"topic"`
 	Description string            `json:"description"`
+	Pin         string            `json:"pin"`
+	Sha         string            `json:"sha"`
+	Semver      string            `json:"semver"`
+	Arch        string            `json:"arch"`
 }
 
 type BuildConfig struct {
