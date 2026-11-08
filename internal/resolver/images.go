@@ -161,37 +161,20 @@ type Package struct {
 // the image artifact is accessed
 func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata, fts model.Features) (string, error) {
 
-	var spec, buildKey string
+	var spec, buildKey, pullRef string
 	if hasImage(md) {
-		infoCtx, cancel := context.WithTimeout(ctx, r.timeouts.Network)
-		defer cancel()
-
-		infoCmd := exec.CommandContext(infoCtx, "kraft", "pkg", "info", "-u", "-o", "json", md.Image)
-
-		output, err := infoCmd.Output()
-		if err != nil {
-			// extracts the error from the output
-			var ee *exec.ExitError
-			if errors.As(err, &ee) {
-				return "", fmt.Errorf("inspecting image %q: %w — %s", md.Image, err, ee.Stderr)
-			}
-			return "", fmt.Errorf("inspecting image %q: %w", md.Image, err)
-		}
-
-		var pkgs []Package
-		if err := json.Unmarshal(output, &pkgs); err != nil {
-			return "", fmt.Errorf("unmarshaling image package: %w", err)
-		}
-
 		if len(fts.Targets) == 0 {
 			return "", fmt.Errorf("layer %q: %w", md.Name, ErrNoTarget)
 		}
-		pkg := resolvePkgByPlat(pkgs, fts.Targets[0])
-		if pkg == nil {
-			return "", fmt.Errorf("image %q on platform %s: %w", md.Image, fts.Targets[0], ErrPlatUnavailable)
+
+		manifest, err := r.resolveManifest(ctx, md, fts.Targets[0])
+		if err != nil {
+			return "", err
 		}
 
-		spec, buildKey, err = generateBuildKeyFromOCIRef(*pkg)
+		pullRef = digestRef(md.Image, manifest)
+
+		spec, buildKey, err = generateBuildKeyFromOCIRef(manifest)
 		if err != nil {
 			return "", fmt.Errorf("canonicalizing specs: %w", err)
 		}
@@ -246,7 +229,7 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 		// path and a rollback on every failure below
 		defer r.removeAll(stageDir)
 
-		if err := r.downloadImage(ctx, md, stageDir); err != nil {
+		if err := r.downloadImage(ctx, md, pullRef, stageDir); err != nil {
 			return "", fmt.Errorf("fetching image for layer %q: %w", md.Name, err)
 		}
 
@@ -294,18 +277,19 @@ func (r *BuildResolver) resolveImage(ctx context.Context, md model.LayerMetadata
 }
 
 // downloadImage populates stageDir with the layer's build artifacts, either by
-// pulling a published image or by cloning and building the layer's repository.
+// pulling a published image by pullRef or by cloning and building the layer's
+// repository.
 // !!! The caller owns stageDir and is responsible for removing it !!!
-func (r *BuildResolver) downloadImage(ctx context.Context, md model.LayerMetadata, stageDir string) error {
+func (r *BuildResolver) downloadImage(ctx context.Context, md model.LayerMetadata, pullRef, stageDir string) error {
 	if hasImage(md) {
 		pullCtx, cancel := context.WithTimeout(ctx, r.timeouts.Network)
 		defer cancel()
 
-		cmd := exec.CommandContext(pullCtx, "kraft", "pkg", "pull", "--no-prompt", "-o", stageDir, md.Image)
+		cmd := exec.CommandContext(pullCtx, "kraft", "pkg", "pull", "--no-prompt", "-o", stageDir, pullRef)
 
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("pull failed for %q: %w — %s", md.Image, err, output)
+			return fmt.Errorf("pull failed for %q: %w — %s", pullRef, err, output)
 		}
 
 		return nil
@@ -407,6 +391,52 @@ func resolveCommit(ctx context.Context, pull string) (string, error) {
 	return fields[0], nil
 }
 
+// resolveManifest, returns the digest of the layer's build for plat. With an arch
+// selected, starmap already resolved the per-platform manifest, otherwise its sha
+// is an index and the platform is picked from the packages the index lists
+func (r *BuildResolver) resolveManifest(ctx context.Context, md model.LayerMetadata, plat string) (string, error) {
+	sha := trimDigest(md.Sha)
+	if sha == "" {
+		return "", fmt.Errorf("layer %q: %w", md.Name, ErrNoDigest)
+	}
+
+	if md.Arch != "" {
+		if md.Arch != plat {
+			return "", fmt.Errorf("layer %q built for %s, targets %s: %w", md.Name, md.Arch, plat, ErrPlatMismatch)
+		}
+		return sha, nil
+	}
+
+	ref := digestRef(md.Image, sha)
+
+	infoCtx, cancel := context.WithTimeout(ctx, r.timeouts.Network)
+	defer cancel()
+
+	infoCmd := exec.CommandContext(infoCtx, "kraft", "pkg", "info", "-u", "-o", "json", ref)
+
+	output, err := infoCmd.Output()
+	if err != nil {
+		// extracts the error from the output
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return "", fmt.Errorf("inspecting image %q: %w — %s", ref, err, ee.Stderr)
+		}
+		return "", fmt.Errorf("inspecting image %q: %w", ref, err)
+	}
+
+	var pkgs []Package
+	if err := json.Unmarshal(output, &pkgs); err != nil {
+		return "", fmt.Errorf("unmarshaling image package: %w", err)
+	}
+
+	pkg := resolvePkgByPlat(pkgs, plat)
+	if pkg == nil {
+		return "", fmt.Errorf("image %q on platform %s: %w", ref, plat, ErrPlatUnavailable)
+	}
+
+	return trimDigest(pkg.Manifest), nil
+}
+
 // resolvePkgByPlat, returns package for provided platform
 func resolvePkgByPlat(pkgs []Package, plat string) *Package {
 	for _, pkg := range pkgs {
@@ -418,11 +448,22 @@ func resolvePkgByPlat(pkgs []Package, plat string) *Package {
 	return nil
 }
 
+// trimDigest, drops the algorithm prefix: kraft reports bare hex digests, while
+// starmap stores whatever CI pushed
+func trimDigest(digest string) string {
+	return strings.TrimPrefix(strings.TrimSpace(digest), "sha256:")
+}
+
+// digestRef, builds an OCI reference pinned to digest
+func digestRef(image, digest string) string {
+	return image + "@sha256:" + digest
+}
+
 // generateBuildKeyFromOCIRef, generates buildKey which will potentially help us avoid the costs
 // of building an image. Returns spec (buildParams, persisted in db for debugging), buildKey, error
-func generateBuildKeyFromOCIRef(pkg Package) (string, string, error) {
+func generateBuildKeyFromOCIRef(manifest string) (string, string, error) {
 	specMap := make(map[string]string)
-	specMap["kind"], specMap["digest"] = "OCI", pkg.Manifest
+	specMap["kind"], specMap["digest"] = "OCI", manifest
 
 	return hashSpec(specMap)
 }

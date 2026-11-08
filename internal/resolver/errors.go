@@ -11,6 +11,10 @@ var (
 
 	ErrPlatUnavailable = errors.New("image publishes no package for provided platform")
 
+	ErrNoDigest = errors.New("layer image has no resolved digest")
+
+	ErrPlatMismatch = errors.New("layer build platform does not match its target")
+
 	ErrNoRemoteRef = errors.New("could not resolve HEAD on remote")
 
 	ErrDataSourceMissing = errors.New("data source path not found")
