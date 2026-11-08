@@ -3,7 +3,7 @@ module github.com/c12s/gprunner
 go 1.25.5
 
 require (
-	github.com/c12s/starmap v0.0.0-20260702120057-ff6fb3b51183
+	github.com/c12s/starmap v0.0.0-20260930184337-23a8a8d896c0
 	golang.org/x/sys v0.47.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
