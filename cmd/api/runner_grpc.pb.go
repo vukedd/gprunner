@@ -19,16 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RunnerService_Pull_FullMethodName        = "/proto.RunnerService/Pull"
-	RunnerService_Instantiate_FullMethodName = "/proto.RunnerService/Instantiate"
-	RunnerService_Kill_FullMethodName        = "/proto.RunnerService/Kill"
+	RunnerService_Pull_FullMethodName        = "/runner_proto.RunnerService/Pull"
+	RunnerService_Instantiate_FullMethodName = "/runner_proto.RunnerService/Instantiate"
+	RunnerService_Kill_FullMethodName        = "/runner_proto.RunnerService/Kill"
 )
 
 // RunnerServiceClient is the client API for RunnerService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RunnerServiceClient interface {
-	Pull(ctx context.Context, in *ChartRef, opts ...grpc.CallOption) (*Empty, error)
+	Pull(ctx context.Context, in *PullReq, opts ...grpc.CallOption) (*Empty, error)
 	Instantiate(ctx context.Context, in *InstantiateReq, opts ...grpc.CallOption) (*Empty, error)
 	Kill(ctx context.Context, in *ChartRef, opts ...grpc.CallOption) (*Empty, error)
 }
@@ -41,7 +41,7 @@ func NewRunnerServiceClient(cc grpc.ClientConnInterface) RunnerServiceClient {
 	return &runnerServiceClient{cc}
 }
 
-func (c *runnerServiceClient) Pull(ctx context.Context, in *ChartRef, opts ...grpc.CallOption) (*Empty, error) {
+func (c *runnerServiceClient) Pull(ctx context.Context, in *PullReq, opts ...grpc.CallOption) (*Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Empty)
 	err := c.cc.Invoke(ctx, RunnerService_Pull_FullMethodName, in, out, cOpts...)
@@ -75,7 +75,7 @@ func (c *runnerServiceClient) Kill(ctx context.Context, in *ChartRef, opts ...gr
 // All implementations must embed UnimplementedRunnerServiceServer
 // for forward compatibility.
 type RunnerServiceServer interface {
-	Pull(context.Context, *ChartRef) (*Empty, error)
+	Pull(context.Context, *PullReq) (*Empty, error)
 	Instantiate(context.Context, *InstantiateReq) (*Empty, error)
 	Kill(context.Context, *ChartRef) (*Empty, error)
 	mustEmbedUnimplementedRunnerServiceServer()
@@ -88,7 +88,7 @@ type RunnerServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedRunnerServiceServer struct{}
 
-func (UnimplementedRunnerServiceServer) Pull(context.Context, *ChartRef) (*Empty, error) {
+func (UnimplementedRunnerServiceServer) Pull(context.Context, *PullReq) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method Pull not implemented")
 }
 func (UnimplementedRunnerServiceServer) Instantiate(context.Context, *InstantiateReq) (*Empty, error) {
@@ -119,7 +119,7 @@ func RegisterRunnerServiceServer(s grpc.ServiceRegistrar, srv RunnerServiceServe
 }
 
 func _RunnerService_Pull_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ChartRef)
+	in := new(PullReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func _RunnerService_Pull_Handler(srv interface{}, ctx context.Context, dec func(
 		FullMethod: RunnerService_Pull_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RunnerServiceServer).Pull(ctx, req.(*ChartRef))
+		return srv.(RunnerServiceServer).Pull(ctx, req.(*PullReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -176,7 +176,7 @@ func _RunnerService_Kill_Handler(srv interface{}, ctx context.Context, dec func(
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var RunnerService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "proto.RunnerService",
+	ServiceName: "runner_proto.RunnerService",
 	HandlerType: (*RunnerServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

@@ -1,10 +1,10 @@
 syntax = "proto3";
 
 option go_package = "github.com/c12s/gprunner/cmd/api";
-package proto;
+package runner_proto;
 
 service RunnerService {
-  rpc Pull(ChartRef) returns (Empty) {}
+  rpc Pull(PullReq) returns (Empty) {}
   rpc Instantiate(InstantiateReq) returns (Empty) {}
   rpc Kill(ChartRef) returns (Empty) {}
 }
@@ -16,9 +16,22 @@ message ChartRef {
   string schemaVersion = 4;
 }
 
+// picks a layer version, both fields optional: an empty semver means latest,
+// an empty arch the multi-platform index
+message LayerSelector {
+  string semver = 1;
+  string arch = 2;
+}
+
 message InstantiateReq {
   ChartRef ref = 1;
   bool pull = 2;
+  map<string, LayerSelector> layers = 3;
+}
+
+message PullReq {
+  ChartRef ref = 1;
+  map<string, LayerSelector> layers = 2;
 }
 
 message Empty {}

@@ -89,17 +89,72 @@ func (x *ChartRef) GetSchemaVersion() string {
 	return ""
 }
 
-type InstantiateReq struct {
+// picks a layer version, both fields optional: an empty semver means latest,
+// an empty arch the multi-platform index
+type LayerSelector struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ref           *ChartRef              `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	Pull          bool                   `protobuf:"varint,2,opt,name=pull,proto3" json:"pull,omitempty"`
+	Semver        string                 `protobuf:"bytes,1,opt,name=semver,proto3" json:"semver,omitempty"`
+	Arch          string                 `protobuf:"bytes,2,opt,name=arch,proto3" json:"arch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LayerSelector) Reset() {
+	*x = LayerSelector{}
+	mi := &file_runner_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LayerSelector) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LayerSelector) ProtoMessage() {}
+
+func (x *LayerSelector) ProtoReflect() protoreflect.Message {
+	mi := &file_runner_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LayerSelector.ProtoReflect.Descriptor instead.
+func (*LayerSelector) Descriptor() ([]byte, []int) {
+	return file_runner_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *LayerSelector) GetSemver() string {
+	if x != nil {
+		return x.Semver
+	}
+	return ""
+}
+
+func (x *LayerSelector) GetArch() string {
+	if x != nil {
+		return x.Arch
+	}
+	return ""
+}
+
+type InstantiateReq struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Ref           *ChartRef                 `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Pull          bool                      `protobuf:"varint,2,opt,name=pull,proto3" json:"pull,omitempty"`
+	Layers        map[string]*LayerSelector `protobuf:"bytes,3,rep,name=layers,proto3" json:"layers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *InstantiateReq) Reset() {
 	*x = InstantiateReq{}
-	mi := &file_runner_proto_msgTypes[1]
+	mi := &file_runner_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -111,7 +166,7 @@ func (x *InstantiateReq) String() string {
 func (*InstantiateReq) ProtoMessage() {}
 
 func (x *InstantiateReq) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_proto_msgTypes[1]
+	mi := &file_runner_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -124,7 +179,7 @@ func (x *InstantiateReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstantiateReq.ProtoReflect.Descriptor instead.
 func (*InstantiateReq) Descriptor() ([]byte, []int) {
-	return file_runner_proto_rawDescGZIP(), []int{1}
+	return file_runner_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *InstantiateReq) GetRef() *ChartRef {
@@ -141,6 +196,65 @@ func (x *InstantiateReq) GetPull() bool {
 	return false
 }
 
+func (x *InstantiateReq) GetLayers() map[string]*LayerSelector {
+	if x != nil {
+		return x.Layers
+	}
+	return nil
+}
+
+type PullReq struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Ref           *ChartRef                 `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Layers        map[string]*LayerSelector `protobuf:"bytes,2,rep,name=layers,proto3" json:"layers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullReq) Reset() {
+	*x = PullReq{}
+	mi := &file_runner_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullReq) ProtoMessage() {}
+
+func (x *PullReq) ProtoReflect() protoreflect.Message {
+	mi := &file_runner_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullReq.ProtoReflect.Descriptor instead.
+func (*PullReq) Descriptor() ([]byte, []int) {
+	return file_runner_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *PullReq) GetRef() *ChartRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *PullReq) GetLayers() map[string]*LayerSelector {
+	if x != nil {
+		return x.Layers
+	}
+	return nil
+}
+
 type Empty struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -149,7 +263,7 @@ type Empty struct {
 
 func (x *Empty) Reset() {
 	*x = Empty{}
-	mi := &file_runner_proto_msgTypes[2]
+	mi := &file_runner_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -161,7 +275,7 @@ func (x *Empty) String() string {
 func (*Empty) ProtoMessage() {}
 
 func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_runner_proto_msgTypes[2]
+	mi := &file_runner_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -174,29 +288,42 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
-	return file_runner_proto_rawDescGZIP(), []int{2}
+	return file_runner_proto_rawDescGZIP(), []int{4}
 }
 
 var File_runner_proto protoreflect.FileDescriptor
 
 const file_runner_proto_rawDesc = "" +
 	"\n" +
-	"\frunner.proto\x12\x05proto\"\x82\x01\n" +
+	"\frunner.proto\x12\frunner_proto\"\x82\x01\n" +
 	"\bChartRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x1e\n" +
 	"\n" +
 	"maintainer\x18\x03 \x01(\tR\n" +
 	"maintainer\x12$\n" +
-	"\rschemaVersion\x18\x04 \x01(\tR\rschemaVersion\"G\n" +
-	"\x0eInstantiateReq\x12!\n" +
-	"\x03ref\x18\x01 \x01(\v2\x0f.proto.ChartRefR\x03ref\x12\x12\n" +
-	"\x04pull\x18\x02 \x01(\bR\x04pull\"\a\n" +
-	"\x05Empty2\x97\x01\n" +
-	"\rRunnerService\x12'\n" +
-	"\x04Pull\x12\x0f.proto.ChartRef\x1a\f.proto.Empty\"\x00\x124\n" +
-	"\vInstantiate\x12\x15.proto.InstantiateReq\x1a\f.proto.Empty\"\x00\x12'\n" +
-	"\x04Kill\x12\x0f.proto.ChartRef\x1a\f.proto.Empty\"\x00B\"Z github.com/c12s/gprunner/cmd/apib\x06proto3"
+	"\rschemaVersion\x18\x04 \x01(\tR\rschemaVersion\";\n" +
+	"\rLayerSelector\x12\x16\n" +
+	"\x06semver\x18\x01 \x01(\tR\x06semver\x12\x12\n" +
+	"\x04arch\x18\x02 \x01(\tR\x04arch\"\xe8\x01\n" +
+	"\x0eInstantiateReq\x12(\n" +
+	"\x03ref\x18\x01 \x01(\v2\x16.runner_proto.ChartRefR\x03ref\x12\x12\n" +
+	"\x04pull\x18\x02 \x01(\bR\x04pull\x12@\n" +
+	"\x06layers\x18\x03 \x03(\v2(.runner_proto.InstantiateReq.LayersEntryR\x06layers\x1aV\n" +
+	"\vLayersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
+	"\x05value\x18\x02 \x01(\v2\x1b.runner_proto.LayerSelectorR\x05value:\x028\x01\"\xc6\x01\n" +
+	"\aPullReq\x12(\n" +
+	"\x03ref\x18\x01 \x01(\v2\x16.runner_proto.ChartRefR\x03ref\x129\n" +
+	"\x06layers\x18\x02 \x03(\v2!.runner_proto.PullReq.LayersEntryR\x06layers\x1aV\n" +
+	"\vLayersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
+	"\x05value\x18\x02 \x01(\v2\x1b.runner_proto.LayerSelectorR\x05value:\x028\x01\"\a\n" +
+	"\x05Empty2\xc0\x01\n" +
+	"\rRunnerService\x124\n" +
+	"\x04Pull\x12\x15.runner_proto.PullReq\x1a\x13.runner_proto.Empty\"\x00\x12B\n" +
+	"\vInstantiate\x12\x1c.runner_proto.InstantiateReq\x1a\x13.runner_proto.Empty\"\x00\x125\n" +
+	"\x04Kill\x12\x16.runner_proto.ChartRef\x1a\x13.runner_proto.Empty\"\x00B\"Z github.com/c12s/gprunner/cmd/apib\x06proto3"
 
 var (
 	file_runner_proto_rawDescOnce sync.Once
@@ -210,25 +337,34 @@ func file_runner_proto_rawDescGZIP() []byte {
 	return file_runner_proto_rawDescData
 }
 
-var file_runner_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_runner_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_runner_proto_goTypes = []any{
-	(*ChartRef)(nil),       // 0: proto.ChartRef
-	(*InstantiateReq)(nil), // 1: proto.InstantiateReq
-	(*Empty)(nil),          // 2: proto.Empty
+	(*ChartRef)(nil),       // 0: runner_proto.ChartRef
+	(*LayerSelector)(nil),  // 1: runner_proto.LayerSelector
+	(*InstantiateReq)(nil), // 2: runner_proto.InstantiateReq
+	(*PullReq)(nil),        // 3: runner_proto.PullReq
+	(*Empty)(nil),          // 4: runner_proto.Empty
+	nil,                    // 5: runner_proto.InstantiateReq.LayersEntry
+	nil,                    // 6: runner_proto.PullReq.LayersEntry
 }
 var file_runner_proto_depIdxs = []int32{
-	0, // 0: proto.InstantiateReq.ref:type_name -> proto.ChartRef
-	0, // 1: proto.RunnerService.Pull:input_type -> proto.ChartRef
-	1, // 2: proto.RunnerService.Instantiate:input_type -> proto.InstantiateReq
-	0, // 3: proto.RunnerService.Kill:input_type -> proto.ChartRef
-	2, // 4: proto.RunnerService.Pull:output_type -> proto.Empty
-	2, // 5: proto.RunnerService.Instantiate:output_type -> proto.Empty
-	2, // 6: proto.RunnerService.Kill:output_type -> proto.Empty
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 0: runner_proto.InstantiateReq.ref:type_name -> runner_proto.ChartRef
+	5, // 1: runner_proto.InstantiateReq.layers:type_name -> runner_proto.InstantiateReq.LayersEntry
+	0, // 2: runner_proto.PullReq.ref:type_name -> runner_proto.ChartRef
+	6, // 3: runner_proto.PullReq.layers:type_name -> runner_proto.PullReq.LayersEntry
+	1, // 4: runner_proto.InstantiateReq.LayersEntry.value:type_name -> runner_proto.LayerSelector
+	1, // 5: runner_proto.PullReq.LayersEntry.value:type_name -> runner_proto.LayerSelector
+	3, // 6: runner_proto.RunnerService.Pull:input_type -> runner_proto.PullReq
+	2, // 7: runner_proto.RunnerService.Instantiate:input_type -> runner_proto.InstantiateReq
+	0, // 8: runner_proto.RunnerService.Kill:input_type -> runner_proto.ChartRef
+	4, // 9: runner_proto.RunnerService.Pull:output_type -> runner_proto.Empty
+	4, // 10: runner_proto.RunnerService.Instantiate:output_type -> runner_proto.Empty
+	4, // 11: runner_proto.RunnerService.Kill:output_type -> runner_proto.Empty
+	9, // [9:12] is the sub-list for method output_type
+	6, // [6:9] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_runner_proto_init() }
@@ -242,7 +378,7 @@ func file_runner_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_runner_proto_rawDesc), len(file_runner_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

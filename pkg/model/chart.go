@@ -11,6 +11,12 @@ type ChartRef struct {
 	Namespace     string
 	Maintainer    string
 	SchemaVersion string
+	Layers        map[string]LayerSelector
+}
+
+type LayerSelector struct {
+	Semver string
+	Arch   string
 }
 
 type Chart struct {

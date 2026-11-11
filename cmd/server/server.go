@@ -27,8 +27,8 @@ func New(runner *gprunner.Runner, sm *starmap.Client, l *slog.Logger) *Server {
 }
 
 // Pull fetches the chart from starmap and saves it, replacing any earlier copy.
-func (s *Server) Pull(ctx context.Context, ref *api.ChartRef) (*api.Empty, error) {
-	if _, err := s.pull(ctx, ref); err != nil {
+func (s *Server) Pull(ctx context.Context, req *api.PullReq) (*api.Empty, error) {
+	if _, err := s.pull(ctx, req); err != nil {
 		return nil, err
 	}
 
@@ -43,7 +43,7 @@ func (s *Server) Instantiate(ctx context.Context, req *api.InstantiateReq) (*api
 	}
 
 	if req.GetPull() {
-		chart, err := s.pull(ctx, req.GetRef())
+		chart, err := s.pull(ctx, req)
 		if err != nil {
 			return nil, err
 		}
@@ -76,8 +76,8 @@ func (s *Server) Kill(ctx context.Context, apiRef *api.ChartRef) (*api.Empty, er
 }
 
 // pull is the shared fetch-and-save step of Pull and Instantiate.
-func (s *Server) pull(ctx context.Context, apiRef *api.ChartRef) (model.Chart, error) {
-	ref, err := toRef(apiRef)
+func (s *Server) pull(ctx context.Context, pullReq layeredReq) (model.Chart, error) {
+	ref, err := toLayeredRef(pullReq)
 	if err != nil {
 		return model.Chart{}, err
 	}
@@ -99,6 +99,20 @@ func (s *Server) pull(ctx context.Context, apiRef *api.ChartRef) (model.Chart, e
 
 	s.logger.Info("chart pulled", "chart", chart.Metadata.Name, "id", chart.Metadata.ID, "version", chart.SchemaVersion)
 	return chart, nil
+}
+
+type layeredReq interface {
+	GetRef() *api.ChartRef
+	GetLayers() map[string]*api.LayerSelector
+}
+
+func toLayeredRef(req layeredReq) (model.ChartRef, error) {
+	ref, err := toRef(req.GetRef())
+	if err != nil {
+		return model.ChartRef{}, err
+	}
+	ref.Layers = toModelLayers(req.GetLayers())
+	return ref, nil
 }
 
 // toRef validates the wire reference and converts it to the library's type.
@@ -129,4 +143,16 @@ func toStatus(err error) error {
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}
+}
+
+func toModelLayers(layers map[string]*api.LayerSelector) map[string]model.LayerSelector {
+	layerMap := make(map[string]model.LayerSelector)
+	for k, v := range layers {
+		layerMap[k] = model.LayerSelector{
+			Semver: v.GetSemver(),
+			Arch:   v.GetArch(),
+		}
+	}
+
+	return layerMap
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/c12s/starmap/api"
 	starmapapi "github.com/c12s/starmap/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -37,11 +38,12 @@ func Dial(addr string) (*Client, error) {
 func (c *Client) Close() error { return c.conn.Close() }
 
 func (c *Client) GetChart(ctx context.Context, ref model.ChartRef) (model.Chart, error) {
-	resp, err := c.reg.GetChartMetadata(ctx, &starmapapi.GetChartFromMetadataReq{
+	resp, err := c.reg.GetChartMetadata(ctx, &api.GetChartFromMetadataReq{
 		Name:          ref.Name,
 		Namespace:     ref.Namespace,
 		Maintainer:    ref.Maintainer,
 		SchemaVersion: ref.SchemaVersion,
+		Layers:        toApiLayers(ref.Layers),
 	})
 	if err != nil {
 		return model.Chart{}, fmt.Errorf("starmap: fetching chart %s/%s@%q for %s: %w", ref.Namespace, ref.Name, ref.SchemaVersion, ref.Maintainer, err)
@@ -50,7 +52,19 @@ func (c *Client) GetChart(ctx context.Context, ref model.ChartRef) (model.Chart,
 	return toModel(resp)
 }
 
-func toModel(resp *starmapapi.GetChartResp) (model.Chart, error) {
+func toApiLayers(layers map[string]model.LayerSelector) map[string]*api.LayerSelector {
+	layerMap := make(map[string]*api.LayerSelector)
+	for k, v := range layers {
+		layerMap[k] = &api.LayerSelector{
+			Semver: v.Semver,
+			Arch:   v.Arch,
+		}
+	}
+
+	return layerMap
+}
+
+func toModel(resp *api.GetChartResp) (model.Chart, error) {
 	raw, err := protojson.Marshal(resp)
 	if err != nil {
 		return model.Chart{}, fmt.Errorf("starmap: encoding chart: %w", err)
